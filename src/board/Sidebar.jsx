@@ -5,7 +5,7 @@
 // row to own those.
 
 import { useState } from 'react'
-import { FolderOpen, RefreshCw } from 'lucide-react'
+import { FolderOpen, GitBranch, RefreshCw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -64,6 +64,12 @@ function UserFooter({ userEmail, sync }) {
         {userEmail || 'No git email configured'}
       </span>
       <div className="flex min-w-0 items-center gap-1">
+        {ready && status.branch && (
+          <span className="text-muted-foreground flex shrink-0 items-center gap-0.5" title={`Branch: ${status.branch}`}>
+            <GitBranch className="h-3 w-3" />
+            {status.branch}
+          </span>
+        )}
         <span
           className={
             error || blocked
