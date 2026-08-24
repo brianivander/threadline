@@ -9,7 +9,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
-const { describeWorkspace, syncWorkspace, buildCommitMessage, classifyFailure, listGitHubAccounts, remoteUserFromUrl, authorForAccount } = require('./git-sync.cjs')
+const { describeWorkspace, syncWorkspace, buildCommitMessage, classifyFailure, listGitHubAccounts, remoteUserFromUrl, bareRemoteUrl, authorForAccount } = require('./git-sync.cjs')
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -87,6 +87,12 @@ test('authorForAccount pairs a username with GitHub’s noreply email', () => {
     name: 'briangruntable',
     email: 'briangruntable@users.noreply.github.com',
   })
+})
+
+test('bareRemoteUrl strips the username so each account can be probed fairly', () => {
+  assert.equal(bareRemoteUrl('https://briangruntable@github.com/gruntable/books.git'), 'https://github.com/gruntable/books.git')
+  assert.equal(bareRemoteUrl('https://github.com/gruntable/books.git'), 'https://github.com/gruntable/books.git')
+  assert.equal(bareRemoteUrl(null), '')
 })
 
 test('describeWorkspace reports each unmet prerequisite', async () => {

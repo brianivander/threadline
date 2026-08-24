@@ -68,14 +68,24 @@ function remoteUserFromUrl(url) {
 // the account can reach the repo; GitHub reports inaccessible repos as
 // "Repository not found", which surfaces here as `false`.
 //
+// The remote is probed WITHOUT any username baked into its URL: a URL like
+// "https://briangruntable@github.com/..." would make git ALWAYS authenticate
+// as briangruntable regardless of credential.username, so every account would
+// wrongly report access. Stripping the username lets each account be tested
+// honestly.
+//
 // Note: this proves *access* (the account can read/fetch), which is what
 // filters out the "wrong account" case. A collaborator who can read but not
 // push is a rarer, separate case — the push itself will still say so.
+function bareRemoteUrl(remote) {
+  return String(remote || '').replace(/^https:\/\/[^@/]+@github\.com\//, 'https://github.com/')
+}
+
 async function probeAccountAccess(root, remote, username) {
   try {
     await execFileAsync(
       'git',
-      ['-c', 'credential.helper=store', '-c', `credential.username=${username}`, ...CREDENTIAL_ARGS, 'ls-remote', '--heads', remote],
+      ['-c', 'credential.helper=store', '-c', `credential.username=${username}`, ...CREDENTIAL_ARGS, 'ls-remote', '--heads', bareRemoteUrl(remote)],
       { cwd: root, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, env: gitEnv() },
     )
     return true
@@ -281,6 +291,7 @@ module.exports = {
   classifyFailure,
   listGitHubAccounts,
   remoteUserFromUrl,
+  bareRemoteUrl,
   probeAccountAccess,
   authorForAccount,
 }
