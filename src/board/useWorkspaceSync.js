@@ -27,7 +27,7 @@ const REASONS = {
   diverged: 'Your copy and the team’s have both changed — resolve it in GitHub Desktop',
   'dirty-conflict': 'Your local edits clash with incoming changes — resolve in GitHub Desktop',
   'auth-failed': 'Git could not sign you in — check your account in GitHub Desktop',
-  'wrong-account': 'This account can’t push to this repo — choose another account',
+  'wrong-account': 'This account can’t push to this repo — check your access in GitHub',
   timeout: 'Sync timed out — check your connection and try again',
   'push-failed': 'Could not send your changes up',
 }
