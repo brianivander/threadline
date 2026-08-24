@@ -43,24 +43,14 @@ function UserFooter({ userEmail, sync }) {
   const blocked = status && status.state !== 'ready' ? status.state : null
   const ready = !!status && status.state === 'ready'
   const pending = ready ? status.ahead : 0
-  // Fully in sync: no local commits to send and nothing to pull from the
-  // remote. This wordlessly overrides a stale error from an earlier failed
-  // attempt — nothing is wrong right now, so the footer must not claim so.
-  const synced = ready && pending === 0 && (status.behind || 0) === 0
 
-  const line = synced
-    ? formatLastSync(lastSync)
-    : error
-      ? syncMessage(error)
-      : blocked
-        ? syncMessage(blocked)
-        : syncing
-          ? 'Syncing…'
-          : formatLastSync(lastSync) + (pending > 0 ? ` · ${pending} unpushed` : '')
-
-  // Something is actually wrong right now — drives both the wording and the
-  // red colour, so a clean repo never shows "Last sync 2m ago" in error red.
-  const isFailure = !synced && (!!error || !!blocked)
+  const line = error
+    ? syncMessage(error)
+    : blocked
+      ? syncMessage(blocked)
+      : syncing
+        ? 'Syncing…'
+        : formatLastSync(lastSync) + (pending > 0 ? ` · ${pending} unpushed` : '')
 
   return (
     <div className="bg-muted/40 flex shrink-0 flex-col gap-0.5 border-t px-3 py-1.5 text-xs">
@@ -82,7 +72,7 @@ function UserFooter({ userEmail, sync }) {
         )}
         <span
           className={
-            isFailure
+            error || blocked
               ? 'text-destructive min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap'
               : 'text-muted-foreground min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap'
           }

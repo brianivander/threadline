@@ -105,6 +105,9 @@ export function useWorkspaceSync({ root }) {
       } else {
         setError(result?.reason || 'push-failed')
         setDetail(result?.detail || null)
+        // Loud failure in the devtools console too — the footer can only ever
+        // show one short line, but the console shows git's full output.
+        console.error('[threadline sync]', result?.reason, result?.detail || '')
       }
     } finally {
       setSyncing(false)

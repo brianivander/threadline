@@ -169,6 +169,9 @@ async function syncWorkspace(root) {
     return { ok: true, committed: files.length, pushed: pending.ahead, status: await describeWorkspace(root) }
   } catch (err) {
     const text = `${err.stderr || err.message || ''}`
+    // Loud, right here, every failure: git's own words in the process console,
+    // so a sync that didn't work is never left to a tooltip to explain.
+    console.error('[threadline sync]', text.trim() || err)
     return {
       ok: false,
       reason: classifyFailure(text, err),
