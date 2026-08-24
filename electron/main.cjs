@@ -209,10 +209,26 @@ function setupSyncHandlers() {
   })
 }
 
-// A workspace's chosen push account, keyed on its folder (the same folder the
-// user picked). Stored in the same threadline.db as the user registry, so each
-// workspace remembers which GitHub account it pushes as.
+// The nearest git repo root walking up from a folder — e.g. the `requirements`
+// subfolder resolves to the `10 Gruntable Books` repo root. Used as the key so
+// every subfolder of the same repo shares one chosen account, not per-folder.
+function repoRootOf(workspaceDir) {
+  try {
+    const root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: workspaceDir || PROJECT_ROOT,
+      encoding: 'utf8',
+    }).trim()
+    return root || workspaceDir
+  } catch {
+    return workspaceDir
+  }
+}
+
+// A workspace's chosen push account, keyed on its repo root so every subfolder
+// of the same repo shares the one answer. Stored in the same threadline.db as
+// the user registry.
 async function readWorkspaceAccount(workspaceDir) {
+  const key = repoRootOf(workspaceDir)
   const table = 'CREATE TABLE IF NOT EXISTS workspace_accounts (workspace_root TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL, created_at TEXT NOT NULL)'
   const SQL = await getSqlJs()
   const dbPath = getUserDbPath(workspaceDir)
@@ -221,7 +237,7 @@ async function readWorkspaceAccount(workspaceDir) {
   try {
     db.run(table)
     const stmt = db.prepare('SELECT username FROM workspace_accounts WHERE workspace_root = ?')
-    stmt.bind([workspaceDir])
+    stmt.bind([key])
     if (stmt.step()) username = stmt.getAsObject().username
     stmt.free()
   } finally {
@@ -231,13 +247,14 @@ async function readWorkspaceAccount(workspaceDir) {
 }
 
 async function writeWorkspaceAccount(workspaceDir, username) {
+  const key = repoRootOf(workspaceDir)
   const table = 'CREATE TABLE IF NOT EXISTS workspace_accounts (workspace_root TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL, created_at TEXT NOT NULL)'
   const SQL = await getSqlJs()
   const dbPath = getUserDbPath(workspaceDir)
   const db = fs.existsSync(dbPath) ? new SQL.Database(fs.readFileSync(dbPath)) : new SQL.Database()
   db.run(table)
   db.run('INSERT OR REPLACE INTO workspace_accounts (workspace_root, username, created_at) VALUES (?, ?, ?)', [
-    workspaceDir,
+    key,
     username,
     new Date().toISOString(),
   ])
@@ -299,7 +316,8 @@ function setupAccountHandlers() {
       const accounts = listGitHubAccounts()
       const result = []
       for (const a of accounts) {
-        result.push({ username: a.username, canAccess: await probeAccountAccess(workspaceDir, status.remote, a.username) })
+        const canAccess = await probeAccountAccess(workspaceDir, status.remote, a.username)
+        result.push({ username: a.username, canAccess })
       }
       return result
     } catch (err) {

@@ -39,20 +39,21 @@ function WorkspaceBar({ workspaceName, onOpenWorkspace }) {
 // of three things matters most right now, in that order: a failure, why sync
 // can't run at all, or when it last did — a "Last sync 2m ago" sitting above
 // an unreported error is the one thing this footer must never show.
-function UserFooter({ userEmail, onUserEmailChange, sync }) {
+function UserFooter({ onUserEmailChange, sync }) {
   const { status, lastSync, syncing, error, detail, onSync, accounts, pushUser, chooseAccount } = sync
   const blocked = status && status.state !== 'ready' ? status.state : null
   const ready = !!status && status.state === 'ready'
   const pending = ready ? status.ahead : 0
 
-  // A picker only helps when there is more than one account to choose between;
-  // a single account (or none) needs no UI at all.
+  // The dropdown is the one place identity is shown — each entry is the account's
+  // full email (so two accounts sharing a front name stay distinguishable), and
+  // the commit itself is stamped with the username. No separate email line.
   const showAccounts = accounts.length > 1
+  const accessible = accounts.filter((a) => a.canAccess !== false)
+  const noneAccessible = accounts.length > 0 && accessible.length === 0
 
   async function handleChooseAccount(username) {
     const result = await chooseAccount(username)
-    // Choosing an account rewrites the workspace's git identity to match, so
-    // keep the footer's email in step with the account just picked.
     if (result?.author?.email && onUserEmailChange) onUserEmailChange(result.author.email)
   }
 
@@ -66,29 +67,26 @@ function UserFooter({ userEmail, onUserEmailChange, sync }) {
 
   return (
     <div className="bg-muted/40 flex shrink-0 flex-col gap-0.5 border-t px-3 py-1.5 text-xs">
-      <span
-        className={
-          userEmail
-            ? 'min-w-0 overflow-hidden text-ellipsis whitespace-nowrap'
-            : 'text-muted-foreground min-w-0 overflow-hidden italic text-ellipsis whitespace-nowrap'
-        }
-      >
-        {userEmail || 'No git email configured'}
-      </span>
-      {showAccounts && (
-        <Select value={pushUser || ''} onValueChange={handleChooseAccount}>
-          <SelectTrigger size="sm" className="h-6 w-full px-2 text-xs" aria-label="GitHub account">
-            <SelectValue placeholder="Choose GitHub account…" />
-          </SelectTrigger>
-          <SelectContent>
-            {accounts.map((a) => (
-              <SelectItem key={a.username} value={a.username} disabled={a.canAccess === false}>
-                {a.username}
-                {a.canAccess === false ? ' · no access' : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {noneAccessible ? (
+        <span className="text-destructive min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title="None of your saved GitHub accounts can access this repo. Log in with the right account in GitHub Desktop, then reopen this workspace.">
+          No saved account can access this repo
+        </span>
+      ) : (
+        showAccounts && (
+          <Select value={pushUser || ''} onValueChange={handleChooseAccount}>
+            <SelectTrigger size="sm" className="h-6 w-full px-2 text-xs" aria-label="GitHub account">
+              <SelectValue placeholder="Choose GitHub account…" />
+            </SelectTrigger>
+            <SelectContent>
+              {accounts.map((a) => (
+                <SelectItem key={a.username} value={a.username} disabled={a.canAccess === false}>
+                  {a.username}
+                  {a.canAccess === false ? ' · no access' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )
       )}
       <div className="flex min-w-0 items-center gap-1">
         {ready && status.branch && (
