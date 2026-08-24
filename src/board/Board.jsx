@@ -124,6 +124,7 @@ export default function Board({
   onSelectStory,
   workspaceName,
   userEmail,
+  onUserEmailChange,
   onOpenWorkspace,
   onOpenLink,
   browserOpen,
@@ -424,6 +425,7 @@ export default function Board({
               collapsedNodes={collapsedNodes}
               workspaceName={workspaceName}
               userEmail={userEmail}
+              onUserEmailChange={onUserEmailChange}
               sync={{
                 status: workspaceSync.status,
                 lastSync: workspaceSync.lastSync,

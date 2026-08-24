@@ -99,6 +99,7 @@ export default function App() {
           onSelectStory={setSelectedStoryId}
           workspaceName={workspaceNameOf(root)}
           userEmail={userEmail}
+          onUserEmailChange={setUserEmail}
           onOpenWorkspace={handleOpenWorkspace}
           onOpenLink={openLink}
           browserOpen={browserOpen}

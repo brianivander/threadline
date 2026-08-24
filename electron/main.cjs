@@ -20,7 +20,7 @@ const { app, BrowserWindow, nativeTheme, session, ipcMain, dialog } = require('e
 const path = require('node:path')
 const fs = require('node:fs')
 const { execFileSync } = require('node:child_process')
-const { describeWorkspace, syncWorkspace, listGitHubAccounts } = require('./git-sync.cjs')
+const { describeWorkspace, syncWorkspace, listGitHubAccounts, probeAccountAccess, authorForAccount } = require('./git-sync.cjs')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const DIST_DIR = path.join(PROJECT_ROOT, 'dist')
@@ -246,6 +246,16 @@ async function writeWorkspaceAccount(workspaceDir, username) {
   return username
 }
 
+// When the user picks an account, make that account the commit author too — so
+// the person who authored the commit and the account that pushed it are the
+// same. Runs git config for the workspace (scope: local to that repo).
+async function setWorkspaceAuthor(workspaceDir, username) {
+  const author = authorForAccount(username)
+  execFileSync('git', ['config', 'user.name', author.name], { cwd: workspaceDir })
+  execFileSync('git', ['config', 'user.email', author.email], { cwd: workspaceDir })
+  return author
+}
+
 let accountHandlersReady = false
 function setupAccountHandlers() {
   if (accountHandlersReady) return
@@ -271,10 +281,30 @@ function setupAccountHandlers() {
   })
   ipcMain.handle('threadline:set-workspace-account', async (_e, workspaceDir, username) => {
     try {
-      return await writeWorkspaceAccount(workspaceDir, username)
+      const author = await setWorkspaceAuthor(workspaceDir, username)
+      const saved = await writeWorkspaceAccount(workspaceDir, username)
+      return { username: saved, author }
     } catch (err) {
       console.error('Failed to save workspace account:', err)
       return null
+    }
+  })
+  // Which saved accounts can actually reach this workspace's remote. Called
+  // before the picker is shown so the user only ever chooses from accounts that
+  // will work — no guessing, no failed push to discover it.
+  ipcMain.handle('threadline:validate-accounts', async (_e, workspaceDir) => {
+    try {
+      const status = await describeWorkspace(workspaceDir)
+      if (status.state !== 'ready' || !status.remote) return []
+      const accounts = listGitHubAccounts()
+      const result = []
+      for (const a of accounts) {
+        result.push({ username: a.username, canAccess: await probeAccountAccess(workspaceDir, status.remote, a.username) })
+      }
+      return result
+    } catch (err) {
+      console.error('Failed to validate accounts:', err)
+      return []
     }
   })
 }

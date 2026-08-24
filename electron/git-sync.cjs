@@ -62,6 +62,39 @@ function remoteUserFromUrl(url) {
   return m ? decodeURIComponent(m[1]) : null
 }
 
+// Can this saved account see the repo at `remote`? Runs `git ls-remote` forced
+// onto that exact account (store helper + credential.username), so a
+// multi-account machine can't let git guess a different one. A zero exit means
+// the account can reach the repo; GitHub reports inaccessible repos as
+// "Repository not found", which surfaces here as `false`.
+//
+// Note: this proves *access* (the account can read/fetch), which is what
+// filters out the "wrong account" case. A collaborator who can read but not
+// push is a rarer, separate case — the push itself will still say so.
+async function probeAccountAccess(root, remote, username) {
+  try {
+    await execFileAsync(
+      'git',
+      ['-c', 'credential.helper=store', '-c', `credential.username=${username}`, ...CREDENTIAL_ARGS, 'ls-remote', '--heads', remote],
+      { cwd: root, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, env: gitEnv() },
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+// The commit-author parts git wants for a given GitHub account. We write the
+// username as the name and GitHub's noreply address as the email — that pairing
+// is exactly what makes GitHub attribute a commit to this account, with no API
+// call and no guess about which of the account's real emails is intended.
+function authorForAccount(username) {
+  return {
+    name: username,
+    email: `${username}@users.noreply.github.com`,
+  }
+}
+
 // Credentials must resolve without anyone being asked, or not at all.
 //
 // A machine typically has several credential helpers configured, tried in
@@ -248,4 +281,6 @@ module.exports = {
   classifyFailure,
   listGitHubAccounts,
   remoteUserFromUrl,
+  probeAccountAccess,
+  authorForAccount,
 }

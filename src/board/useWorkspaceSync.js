@@ -78,26 +78,29 @@ export function useWorkspaceSync({ root }) {
     setStatus(await window.threadlineDesktop.getGitStatus(root))
   }, [root])
 
-  // Switching workspaces swaps both halves of the footer at once — a stale
-  // "Last sync 2m ago" from the previous folder would be a lie about this one.
-  // It also reloads the saved GitHub accounts and this workspace's chosen one.
+  // It also reloads the saved GitHub accounts and this workspace's chosen one,
+  // validating which accounts can actually reach this repo so the picker only
+  // offers ones that will work.
   useEffect(() => {
     setLastSync(root ? readLastSync(root) : null)
     setError(null)
     setDetail(null)
     setPushUser(null)
+    setAccounts([])
     refresh()
     if (isElectron && root) {
-      window.threadlineDesktop.listGitHubAccounts().then((list) => {
-        setAccounts(list || [])
-        return window.threadlineDesktop.getWorkspaceAccount(root)
-      }).then((saved) => {
-        if (saved) setPushUser(saved)
-      }).catch(() => {
-        /* accounts are best-effort; sync still works without them */
-      })
-    } else {
-      setAccounts([])
+      window.threadlineDesktop
+        .validateAccounts(root)
+        .then((list) => {
+          setAccounts(list || [])
+          return window.threadlineDesktop.getWorkspaceAccount(root)
+        })
+        .then((saved) => {
+          if (saved) setPushUser(saved)
+        })
+        .catch(() => {
+          /* accounts are best-effort; sync still works without them */
+        })
     }
   }, [root, refresh])
 
@@ -138,11 +141,13 @@ export function useWorkspaceSync({ root }) {
       setPushUser(username)
       if (isElectron && root) {
         try {
-          await window.threadlineDesktop.setWorkspaceAccount(root, username)
+          const result = await window.threadlineDesktop.setWorkspaceAccount(root, username)
+          return result
         } catch {
           /* noop */
         }
       }
+      return null
     },
     [root],
   )

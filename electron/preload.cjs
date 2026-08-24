@@ -28,4 +28,5 @@ contextBridge.exposeInMainWorld('threadlineDesktop', {
   listGitHubAccounts: () => ipcRenderer.invoke('threadline:list-github-accounts'),
   getWorkspaceAccount: (workspaceDir) => ipcRenderer.invoke('threadline:get-workspace-account', workspaceDir),
   setWorkspaceAccount: (workspaceDir, username) => ipcRenderer.invoke('threadline:set-workspace-account', workspaceDir, username),
+  validateAccounts: (workspaceDir) => ipcRenderer.invoke('threadline:validate-accounts', workspaceDir),
 })

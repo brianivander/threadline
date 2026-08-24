@@ -39,7 +39,7 @@ function WorkspaceBar({ workspaceName, onOpenWorkspace }) {
 // of three things matters most right now, in that order: a failure, why sync
 // can't run at all, or when it last did — a "Last sync 2m ago" sitting above
 // an unreported error is the one thing this footer must never show.
-function UserFooter({ userEmail, sync }) {
+function UserFooter({ userEmail, onUserEmailChange, sync }) {
   const { status, lastSync, syncing, error, detail, onSync, accounts, pushUser, chooseAccount } = sync
   const blocked = status && status.state !== 'ready' ? status.state : null
   const ready = !!status && status.state === 'ready'
@@ -48,6 +48,13 @@ function UserFooter({ userEmail, sync }) {
   // A picker only helps when there is more than one account to choose between;
   // a single account (or none) needs no UI at all.
   const showAccounts = accounts.length > 1
+
+  async function handleChooseAccount(username) {
+    const result = await chooseAccount(username)
+    // Choosing an account rewrites the workspace's git identity to match, so
+    // keep the footer's email in step with the account just picked.
+    if (result?.author?.email && onUserEmailChange) onUserEmailChange(result.author.email)
+  }
 
   const line = error
     ? syncMessage(error)
@@ -69,14 +76,15 @@ function UserFooter({ userEmail, sync }) {
         {userEmail || 'No git email configured'}
       </span>
       {showAccounts && (
-        <Select value={pushUser || ''} onValueChange={chooseAccount}>
+        <Select value={pushUser || ''} onValueChange={handleChooseAccount}>
           <SelectTrigger size="sm" className="h-6 w-full px-2 text-xs" aria-label="GitHub account">
             <SelectValue placeholder="Choose GitHub account…" />
           </SelectTrigger>
           <SelectContent>
             {accounts.map((a) => (
-              <SelectItem key={a.username} value={a.username}>
+              <SelectItem key={a.username} value={a.username} disabled={a.canAccess === false}>
                 {a.username}
+                {a.canAccess === false ? ' · no access' : ''}
               </SelectItem>
             ))}
           </SelectContent>
@@ -125,6 +133,7 @@ export default function Sidebar({
   collapsedNodes,
   workspaceName,
   userEmail,
+  onUserEmailChange,
   sync,
   onOpenWorkspace,
   onSelectStory,
@@ -199,7 +208,7 @@ export default function Sidebar({
         </ContextMenuContent>
       </ContextMenu>
 
-      <UserFooter userEmail={userEmail} sync={sync} />
+      <UserFooter userEmail={userEmail} onUserEmailChange={onUserEmailChange} sync={sync} />
     </div>
   )
 }
