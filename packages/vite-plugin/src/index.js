@@ -32,7 +32,14 @@ import * as repo from '@threadline/core/repo'
 import * as index from './thread-index.js'
 
 export default function threadlineVitePlugin(options = {}) {
-  const dbPath = options.dbPath || null
+  const explicitDbPath = options.dbPath || null
+
+  // When no explicit dbPath is given, each workspace gets its own
+  // threadline.db inside its root directory — so multiple projects don't
+  // share a single database.
+  function resolveDbPath(root) {
+    return explicitDbPath || path.join(root, 'threadline.db')
+  }
 
   // Roots whose index has been built in this process. A workspace is fully
   // reindexed once per run, then kept current per-story by the mutation
@@ -41,10 +48,11 @@ export default function threadlineVitePlugin(options = {}) {
   const indexedRoots = new Set()
 
   async function ensureIndexed(root) {
-    if (!dbPath || indexedRoots.has(root)) return
+    const db = resolveDbPath(root)
+    if (indexedRoots.has(root)) return
     indexedRoots.add(root)
     try {
-      await index.reindexWorkspace(dbPath, root, await repo.scanThreads(root))
+      await index.reindexWorkspace(db, root, await repo.scanThreads(root))
     } catch (err) {
       // A broken index must never take the API down with it — the markdown is
       // the source of truth, and every indexed read can fall back to a scan.
@@ -56,9 +64,9 @@ export default function threadlineVitePlugin(options = {}) {
   // Keep one story's rows current after a thread mutation. Best-effort for the
   // same reason: the write to markdown already succeeded.
   async function reindexStory(root, storyId) {
-    if (!dbPath || !storyId) return
+    if (!storyId) return
     try {
-      await index.reindexStory(dbPath, root, storyId, await repo.listThreads(root, storyId))
+      await index.reindexStory(resolveDbPath(root), root, storyId, await repo.listThreads(root, storyId))
     } catch (err) {
       console.error('[threadline] thread reindex failed:', err)
     }
@@ -66,9 +74,9 @@ export default function threadlineVitePlugin(options = {}) {
 
   // A story is gone from that path — deleted, renamed, or moved away.
   async function dropStoryFromIndex(root, storyId) {
-    if (!dbPath || !storyId) return
+    if (!storyId) return
     try {
-      await index.removeStory(dbPath, root, storyId)
+      await index.removeStory(resolveDbPath(root), root, storyId)
     } catch (err) {
       console.error('[threadline] thread index cleanup failed:', err)
     }
@@ -222,8 +230,8 @@ export default function threadlineVitePlugin(options = {}) {
       const mentions = q.get('mentions')
       const status = q.get('status')
       await ensureIndexed(root)
-      if (dbPath && indexedRoots.has(root)) {
-        return json(res, 200, { data: await index.queryThreads(dbPath, root, { mentions, status }) })
+      if (indexedRoots.has(root)) {
+        return json(res, 200, { data: await index.queryThreads(resolveDbPath(root), root, { mentions, status }) })
       }
       let data = await repo.scanThreads(root)
       if (mentions) data = data.filter((t) => t.mentions.includes(String(mentions).toLowerCase()))
@@ -259,7 +267,7 @@ export default function threadlineVitePlugin(options = {}) {
     // Every user this install has seen, from the same threadline.db that
     // electron/main.cjs registers the current git identity into.
     if (parts[0] === 'users' && method === 'GET') {
-      return json(res, 200, { data: dbPath ? await index.listUsers(dbPath) : [] })
+      return json(res, 200, { data: await index.listUsers(resolveDbPath(root)) })
     }
 
     // ---- reorder (case tab drag & drop — the only reordering the filesystem

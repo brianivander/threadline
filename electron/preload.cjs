@@ -22,7 +22,7 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('threadlineDesktop', {
   isElectron: true,
   chooseWorkspace: () => ipcRenderer.invoke('threadline:choose-workspace'),
-  getCurrentUserEmail: () => ipcRenderer.invoke('threadline:get-user'),
+  getCurrentUserEmail: (workspaceDir) => ipcRenderer.invoke('threadline:get-user', workspaceDir),
   getGitStatus: (root) => ipcRenderer.invoke('threadline:git-status', root),
   syncWorkspace: (root) => ipcRenderer.invoke('threadline:sync', root),
 })

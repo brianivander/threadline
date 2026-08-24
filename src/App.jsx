@@ -37,15 +37,16 @@ export default function App() {
 
   const { tree, setTree, actions } = useThreadlineSync({ root, onFileIdChange })
 
-  // Auto-detect the current user from git config (no login) and register
-  // them in threadline.db on first sight — see main.cjs's
-  // 'threadline:get-user' handler.
+  // Auto-detect the current user from the workspace's git config (no login)
+  // and register them in threadline.db on first sight — see main.cjs's
+  // 'threadline:get-user' handler. Re-resolves whenever the workspace changes,
+  // so each repo reports the identity its own git config has.
   useEffect(() => {
     if (!isElectron) return
-    window.threadlineDesktop.getCurrentUserEmail().then((email) => {
+    window.threadlineDesktop.getCurrentUserEmail(root || undefined).then((email) => {
       if (email) setUserEmail(email)
     })
-  }, [])
+  }, [root])
 
   const setBrowser = useCallback((open) => {
     setBrowserOpen(open)

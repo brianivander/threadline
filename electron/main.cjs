@@ -28,14 +28,13 @@ const EMBED_PARTITION = 'persist:embeds'
 
 // Trusted-team identity: no login, just whatever git already knows the
 // machine as. One SQLite file every install upserts into on first sight of an
-// email — see getOrCreateUserEmail(). The same file also holds the derived
-// comment-thread index, so whoever mounts the threadline API must be handed
-// this exact path as `dbPath`: vite.config.js does it unpackaged (as
-// `artifacts/threadline.db`, a sibling of this project), startProdServer()
-// packaged. A packaged install can't use that sibling — it isn't shipped, and
-// the app directory is read-only under Program Files — so it lives in userData.
+// email — see getOrCreateUserEmail(). When a workspace directory is provided,
+// the db lives inside it (threadline.db alongside the project's files); the
+// fallback (packaged: userData, dev: sibling of PROJECT_ROOT) only covers the
+// case where no workspace has been chosen yet.
 let userDbPath = null
-function getUserDbPath() {
+function getUserDbPath(workspaceDir) {
+  if (workspaceDir) return path.join(workspaceDir, 'threadline.db')
   if (!userDbPath) {
     userDbPath = app.isPackaged
       ? path.join(app.getPath('userData'), 'threadline.db')
@@ -99,7 +98,7 @@ async function startProdServer() {
   // configureServer() only ever calls server.middlewares.use(), so a stub with
   // that one method is all the plugin needs to hand over its handler.
   const middlewares = []
-  await threadline({ dbPath: getUserDbPath() }).configureServer({
+  await threadline().configureServer({
     middlewares: { use: (fn) => middlewares.push(fn) },
   })
 
@@ -164,12 +163,15 @@ function setupWorkspaceHandlers() {
   })
 }
 
-// git resolves local-repo config over global automatically regardless of
-// cwd, so a single call covers both cases; no email configured -> null.
-function getGitUserEmail() {
+// Resolve the git email for a given directory: `git config user.email` walks
+// from that directory up to the repo root, then falls back to global config.
+// The workspace folder is what matters (each person's identity lives in the
+// repo they're working in), not Threadline's own checkout — so cwd is the
+// selected workspace, not PROJECT_ROOT. No email configured -> null.
+function getGitUserEmail(workspaceDir) {
   try {
     const email = execFileSync('git', ['config', 'user.email'], {
-      cwd: PROJECT_ROOT,
+      cwd: workspaceDir || PROJECT_ROOT,
       encoding: 'utf8',
     }).trim()
     return email || null
@@ -221,12 +223,12 @@ function getSqlJs() {
   return sqlJsPromise
 }
 
-async function getOrCreateUserEmail() {
-  const email = getGitUserEmail()
+async function getOrCreateUserEmail(workspaceDir) {
+  const email = getGitUserEmail(workspaceDir)
   if (!email) return null
 
   const SQL = await getSqlJs()
-  const dbPath = getUserDbPath()
+  const dbPath = getUserDbPath(workspaceDir)
   const db = fs.existsSync(dbPath) ? new SQL.Database(fs.readFileSync(dbPath)) : new SQL.Database()
   db.run(
     'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, created_at TEXT NOT NULL)',
@@ -252,9 +254,9 @@ let userHandlerReady = false
 function setupUserHandler() {
   if (userHandlerReady) return
   userHandlerReady = true
-  ipcMain.handle('threadline:get-user', async () => {
+  ipcMain.handle('threadline:get-user', async (_e, workspaceDir) => {
     try {
-      return await getOrCreateUserEmail()
+      return await getOrCreateUserEmail(workspaceDir)
     } catch (err) {
       console.error('Failed to resolve current user:', err)
       return null
