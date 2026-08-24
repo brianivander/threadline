@@ -1,0 +1,21 @@
+{
+  "name": "@threadline/vite-plugin",
+  "version": "0.1.0",
+  "description": "Threadline Vite plugin: a dev-server REST API (/api/threadline/*) over a plain filesystem workspace (projects/features as directories, stories as markdown files).",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@threadline/core": "0.2.0",
+    "sql.js": "^1.14.2"
+  },
+  "peerDependencies": {
+    "vite": ">=4"
+  },
+  "license": "MIT"
+}

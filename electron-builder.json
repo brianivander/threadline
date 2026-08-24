@@ -1,0 +1,36 @@
+{
+  "appId": "io.nanovest.threadline",
+  "productName": "Threadline",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "asar": false,
+  "win": {
+    "target": [
+      { "target": "portable", "arch": ["x64"] },
+      { "target": "nsis", "arch": ["x64"] }
+    ],
+    "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "mac": {
+    "target": [
+      { "target": "dmg", "arch": ["x64", "arm64"] },
+      { "target": "zip", "arch": ["x64", "arm64"] }
+    ]
+  },
+  "dmg": {
+    "contents": [
+      { "x": 130, "y": 220 },
+      { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+    ]
+  }
+}

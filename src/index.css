@@ -1,0 +1,666 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Dark mode is class-driven (`.dark` on <html>), set by ThemeProvider. */
+@custom-variant dark (&:is(.dark *));
+
+/* shadcn/ui — New York, base color Zinc.
+ *
+ * These semantic variables ARE the design-token layer: every component reads
+ * them through Tailwind utilities (bg-background, text-muted-foreground,
+ * border-border) and never a raw colour. Add a component and it inherits the
+ * theme, light and dark, for free. Do not reintroduce literal hex values. */
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+  --primary: oklch(0.21 0.006 285.885);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.015 286.067);
+
+  /* App density tokens — shadcn's set covers colour and radius only, and the
+   * board repeats these two structural values in every tree/tab component. */
+  --tree-row-h: 1.625rem;
+  --tree-indent: 0.875rem;
+
+  /* Scrollbar thumb — see the scrollbar block in @layer base. */
+  --scrollbar-thumb: oklch(0.552 0.016 285.938 / 35%);
+  --scrollbar-thumb-hover: oklch(0.552 0.016 285.938 / 60%);
+
+  /* Code-block syntax colours. Consumed by board/codeMirrorTheme.js through
+   * var() rather than by any Tailwind utility, which is why they are not
+   * mirrored into @theme below. Kept as literals: these are the one place in
+   * the app where hue carries meaning (string vs number vs comment) and the
+   * six semantic tokens have no room for it. */
+  --cm-keyword: oklch(0.5 0.19 295);
+  --cm-name: oklch(0.36 0.02 285);
+  --cm-property: oklch(0.48 0.13 245);
+  --cm-function: oklch(0.5 0.15 255);
+  --cm-type: oklch(0.52 0.11 195);
+  --cm-number: oklch(0.52 0.14 45);
+  --cm-string: oklch(0.48 0.13 145);
+  --cm-comment: oklch(0.6 0.015 285);
+  --cm-punctuation: oklch(0.48 0.015 285);
+  --cm-invalid: oklch(0.55 0.22 27);
+
+  /* Link-tag palette. Same reasoning as the syntax colours above: the user is
+   * assigning hue as meaning ("purple is design, green is data"), which the
+   * semantic tokens cannot express. Twelve colours — three neutrals, then nine
+   * hues in ascending order — enough to tell a story's links apart at a glance,
+   * few enough to pick from without a colour picker.
+   *
+   * Deliberately NOT mirrored in `.dark`: these are absolute colours the user
+   * picked by name, and the set contains both white and black, so a per-theme
+   * inversion would make two of the twelve swap identities. Each colour is a
+   * FILL with its own ink pinned to it instead — dark ink on the light fills,
+   * light ink on the two dark ones — so a chip reads the same in both themes.
+   * Consumed by board/linkTags.js. */
+  --tag-white: oklch(1 0 0);
+  --tag-white-ink: oklch(0.25 0 0);
+  --tag-grey: oklch(0.83 0.004 286);
+  --tag-grey-ink: oklch(0.25 0 0);
+  --tag-black: oklch(0.32 0.004 286);
+  --tag-black-ink: oklch(0.98 0 0);
+
+  --tag-red: oklch(0.85 0.075 27);
+  --tag-red-ink: oklch(0.4 0.15 27);
+  --tag-orange: oklch(0.87 0.075 55);
+  --tag-orange-ink: oklch(0.44 0.13 55);
+  --tag-yellow: oklch(0.92 0.09 100);
+  --tag-yellow-ink: oklch(0.43 0.11 92);
+  --tag-green: oklch(0.88 0.075 150);
+  --tag-green-ink: oklch(0.4 0.11 150);
+  --tag-cyan: oklch(0.89 0.065 195);
+  --tag-cyan-ink: oklch(0.4 0.09 198);
+  --tag-light-blue: oklch(0.87 0.06 235);
+  --tag-light-blue-ink: oklch(0.42 0.12 240);
+  --tag-dark-blue: oklch(0.5 0.15 265);
+  --tag-dark-blue-ink: oklch(0.98 0 0);
+  --tag-purple: oklch(0.86 0.07 300);
+  --tag-purple-ink: oklch(0.42 0.15 300);
+  --tag-pink: oklch(0.87 0.07 350);
+  --tag-pink-ink: oklch(0.44 0.14 350);
+}
+
+.dark {
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.21 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.21 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.92 0.004 286.32);
+  --primary-foreground: oklch(0.21 0.006 285.885);
+  --secondary: oklch(0.274 0.006 286.033);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.274 0.006 286.033);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+  --accent: oklch(0.274 0.006 286.033);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.552 0.016 285.938);
+
+  --scrollbar-thumb: oklch(1 0 0 / 22%);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 40%);
+
+  /* Lightened and desaturated against the dark surface — the light hues
+   * above go muddy below ~0.6 lightness on a dark ground. */
+  --cm-keyword: oklch(0.74 0.13 305);
+  --cm-name: oklch(0.9 0.01 285);
+  --cm-property: oklch(0.79 0.09 235);
+  --cm-function: oklch(0.78 0.1 250);
+  --cm-type: oklch(0.8 0.09 190);
+  --cm-number: oklch(0.8 0.1 60);
+  --cm-string: oklch(0.79 0.11 145);
+  --cm-comment: oklch(0.6 0.015 285);
+  --cm-punctuation: oklch(0.72 0.015 285);
+  --cm-invalid: oklch(0.7 0.19 22);
+
+  /* No --tag-* overrides here on purpose — see the palette note in :root. */
+}
+
+@theme inline {
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --spacing-tree-row: var(--tree-row-h);
+  --spacing-tree-indent: var(--tree-indent);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    /* This is an app shell, not a document: nothing may scroll the window
+     * itself. Every scrollable region owns its own scroll container — the
+     * sidebar tree, the case editor, and the embedded browser. */
+    overflow: hidden;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+
+  /* Scrollbars are invisible until the pointer is inside the region that owns
+   * them, so a scroll container never advertises itself while idle. `overflow:
+   * auto` on every region means one only appears when there is something to
+   * scroll. Only the -webkit- pseudo-elements are used: setting
+   * `scrollbar-color`/`scrollbar-width` would make Chromium ignore them. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    /* Padded via a transparent border + background-clip, so the visible thumb
+     * reads as a 4px pill inside a forgiving 10px hit area. */
+    background-color: transparent;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-clip: content-box;
+  }
+  /* :hover on the scroll container — true whenever the pointer is anywhere
+   * inside it, including over its children. */
+  *:hover::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * MDXEditor bridge.
+ *
+ * MDXEditor does not read shadcn's tokens: it themes itself from a set of
+ * Radix-derived semantic variables, which are pointed at our tokens here. The
+ * rest is done over its documented public class names — `mdxeditor`,
+ * `mdxeditor-toolbar`, `mdxeditor-root-contenteditable`,
+ * `mdxeditor-popup-container` — which are the stable styling hooks across
+ * versions.
+ *
+ * Do NOT rely on MDXEditor's own dark mode. It ships the Radix scales twice:
+ * once under plain `.dark, .dark-theme` selectors and again under CSS-module
+ * hashes (`:root, ._light-theme_6j9u9_1`). The hashed `:root` copy is emitted
+ * last at equal specificity, so it wins — the scales stay pinned to their
+ * light values no matter what class is on <html>, and the `dark-theme` hook
+ * MDXEditor documents no longer matches anything. Every colour the editor
+ * shows therefore has to come from a variable mapped below; anything left
+ * unmapped renders light in both themes. That is why the map is exhaustive.
+ *
+ * The selector is doubled (`.mdxeditor.mdxeditor`) for the same reason: these
+ * variables are declared by MDXEditor on `._editorRoot_er3ed_53`, the very
+ * same element, and its stylesheet is emitted after ours. At one class each,
+ * source order decides and MDXEditor wins. Two classes settle it.
+ *
+ * Toolbar internals have no public class names, only CSS-module hashes
+ * (`_toolbarButton_er3ed_239`). Those are matched on the unhashed prefix so a
+ * version bump doesn't silently drop the styling.
+ * ------------------------------------------------------------------------ */
+.mdxeditor.mdxeditor {
+  /* Surfaces, from the page ground up through the hover/active states. */
+  --basePageBg: var(--background);
+  --baseBase: var(--muted);
+  --baseBg: var(--background);
+  --baseBgSubtle: var(--muted);
+  --baseBgHover: var(--accent);
+  --baseBgActive: var(--accent);
+
+  /* Lines and outlines. */
+  --baseLine: var(--border);
+  --baseBorder: var(--border);
+  --baseBorderHover: var(--muted-foreground);
+
+  /* Filled controls and text. */
+  --baseSolid: var(--muted-foreground);
+  --baseSolidHover: var(--foreground);
+  --baseText: var(--foreground);
+  --baseTextContrast: var(--foreground);
+
+  /* Accent scale — selection, focus, links. */
+  --accentBase: var(--accent);
+  --accentBgSubtle: var(--accent);
+  --accentBg: var(--accent);
+  --accentBgHover: var(--accent);
+  --accentBgActive: var(--ring);
+  --accentLine: var(--border);
+  --accentBorder: var(--primary);
+  --accentBorderHover: var(--primary);
+  --accentSolid: var(--primary);
+  --accentSolidHover: var(--primary);
+  --accentText: var(--foreground);
+  --accentTextContrast: var(--foreground);
+
+  --error-color: var(--destructive);
+
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  font-family: var(--font-sans);
+  color: var(--foreground);
+}
+
+.mdxeditor-toolbar[class*='_toolbarRoot_'] {
+  @apply bg-muted/40 rounded-none border-b;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.25rem 0.5rem;
+  /* The panel is narrow: stock behaviour is a horizontal scroll on the toolbar,
+   * which hides controls behind a scrollbar. Wrap to a second row instead. */
+  flex-wrap: wrap;
+  overflow-x: hidden;
+}
+
+/* Stock spacing comes from four competing sources — the flex gap, a margin on
+ * each group wrapper, an adjacent-button margin, and a margin on the select —
+ * which is what makes the row read as unevenly clumped. Zero the margins and
+ * let the toolbar's own gap be the only spacing between controls; groups are
+ * then tightened so related toggles read as one unit. */
+.mdxeditor-toolbar [class*='_toolbarGroupOfGroups_'],
+.mdxeditor-toolbar [class*='_toolbarToggleSingleGroup_'] {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+  margin: 0;
+}
+
+.mdxeditor-toolbar [class*='_toolbarButton_'] + [class*='_toolbarButton_'] {
+  margin-left: 0;
+}
+
+/* The case editor is an inline panel, not a full-page document: the stock
+ * toolbar controls are sized for the latter. */
+.mdxeditor-toolbar [class*='_toolbarButton_'],
+.mdxeditor-toolbar [class*='_toolbarToggleItem_'] {
+  @apply size-7 cursor-pointer rounded-md;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.mdxeditor-toolbar svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+/* Icons default to full-contrast foreground, which flattens the row: rest at
+ * muted, go full contrast on hover and when the format is active. */
+.mdxeditor-toolbar [class*='_toolbarButton_'] svg,
+.mdxeditor-toolbar [class*='_toolbarToggleItem_'] svg {
+  @apply text-muted-foreground;
+}
+.mdxeditor-toolbar [class*='_toolbarButton_']:hover svg,
+.mdxeditor-toolbar [class*='_toolbarToggleItem_']:hover svg,
+.mdxeditor-toolbar [class*='_toolbar'][data-state='on'] svg {
+  @apply text-foreground;
+}
+.mdxeditor-toolbar [class*='_toolbar'][data-state='on'] {
+  @apply bg-accent;
+}
+.mdxeditor-toolbar [class*='_toolbar'][data-disabled] svg {
+  @apply text-muted-foreground/40;
+}
+
+/* Separators: stock ones use a two-tone bevel at an odd height. One hairline,
+ * matched to the button height. */
+.mdxeditor-toolbar[class*='_toolbarRoot_'] div[role='separator'] {
+  @apply bg-border;
+  width: 1px;
+  height: 1.25rem;
+  margin: 0 0.25rem;
+  border: 0;
+}
+
+/* The block-type select is a fixed 9rem slab with no border, and the generic
+ * button sizing above would otherwise crush it to a 28px square. Give it its
+ * own compact, bordered trigger that lines up with the buttons. */
+.mdxeditor-toolbar [class*='_toolbarNodeKindSelectTrigger_'],
+.mdxeditor-toolbar [class*='_selectTrigger_'] {
+  @apply border-input bg-background text-foreground h-7 cursor-pointer rounded-md border text-xs;
+  width: auto;
+  min-width: 6.5rem;
+  justify-content: space-between;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0 0.375rem 0 0.5rem;
+}
+.mdxeditor-toolbar [class*='_toolbarNodeKindSelectTrigger_']:hover,
+.mdxeditor-toolbar [class*='_selectTrigger_']:hover {
+  @apply bg-accent;
+}
+.mdxeditor-toolbar [class*='_selectTrigger_'][data-placeholder] > span:first-child {
+  @apply text-muted-foreground;
+}
+
+.mdxeditor-root-contenteditable {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Popups (link dialog, table controls) must clear the board's own dialogs. */
+.mdxeditor-popup-container {
+  z-index: 60;
+}
+
+/* ---------------------------------------------------------------------------
+ * Code blocks (CodeMirror).
+ *
+ * MDXEditor hardcodes `cm6-theme-basic-light` into its code block, so the
+ * surface, gutter, cursor and selection all arrive as literal light hex. Token
+ * colours are dealt with in board/codeMirrorTheme.js — the chrome is dealt
+ * with here.
+ *
+ * Every selector below carries THREE classes on purpose. CodeMirror themes
+ * compile to rules of the form `.<generatedThemeClass> .cm-gutters`, two
+ * classes, injected into <head> at mount — which is after this stylesheet.
+ * A matching two-class selector ties on specificity and then loses on source
+ * order, so the doubled `.cm-editor.cm-editor` is what makes these stick.
+ * ------------------------------------------------------------------------ */
+.mdxeditor .cm-editor.cm-editor {
+  @apply bg-muted/50 text-foreground;
+}
+
+.mdxeditor .cm-editor.cm-editor .cm-content {
+  caret-color: var(--foreground);
+}
+
+.mdxeditor .cm-editor.cm-editor .cm-cursor,
+.mdxeditor .cm-editor.cm-editor .cm-dropCursor {
+  border-left-color: var(--foreground);
+}
+
+/* Selection has to be given twice: CodeMirror paints its own selection layer
+ * when focused and hands off to the native ::selection when not. */
+.mdxeditor .cm-editor.cm-editor .cm-selectionBackground,
+.mdxeditor .cm-editor.cm-editor.cm-focused .cm-selectionBackground,
+.mdxeditor .cm-editor.cm-editor .cm-content ::selection {
+  background-color: var(--accent);
+}
+
+/* The active-line and active-gutter highlights read as a solid band across an
+ * already-tinted surface; the code block is a few lines inside a panel, not a
+ * full editor, so it does without them. */
+.mdxeditor .cm-editor.cm-editor .cm-activeLine,
+.mdxeditor .cm-editor.cm-editor .cm-activeLineGutter {
+  background-color: transparent;
+}
+
+.mdxeditor .cm-editor.cm-editor .cm-gutters {
+  @apply text-muted-foreground;
+  background-color: transparent;
+  border: none;
+}
+
+.mdxeditor .cm-editor.cm-editor .cm-selectionMatch,
+.mdxeditor .cm-editor.cm-editor .cm-searchMatch {
+  background-color: var(--accent);
+  outline: none;
+}
+
+.mdxeditor .cm-editor.cm-editor.cm-focused .cm-matchingBracket {
+  @apply bg-accent text-foreground;
+  outline: 1px solid var(--border);
+}
+.mdxeditor .cm-editor.cm-editor.cm-focused .cm-nonmatchingBracket {
+  outline: 1px solid var(--destructive);
+}
+
+.mdxeditor .cm-editor.cm-editor .cm-tooltip,
+.mdxeditor .cm-editor.cm-editor .cm-panels {
+  @apply bg-popover text-popover-foreground border-border border;
+}
+
+.mdxeditor .cm-editor.cm-editor .cm-foldPlaceholder {
+  @apply bg-muted text-muted-foreground;
+  border: none;
+}
+
+/* ---------------------------------------------------------------------------
+ * Editor prose.
+ *
+ * MDXEditor ships no typography for the document itself — it assumes the host
+ * provides it — and Tailwind's preflight has already stripped heading sizes
+ * and list markers. So the block formats the toolbar inserts are invisible
+ * unless they are restyled here. Sized for an inline panel, not a page.
+ * ------------------------------------------------------------------------ */
+.mdxeditor .threadline-prose {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.threadline-prose p {
+  margin: 0.5rem 0;
+}
+.threadline-prose > :first-child {
+  margin-top: 0;
+}
+.threadline-prose > :last-child {
+  margin-bottom: 0;
+}
+
+.threadline-prose h1,
+.threadline-prose h2,
+.threadline-prose h3,
+.threadline-prose h4,
+.threadline-prose h5,
+.threadline-prose h6 {
+  @apply text-foreground font-semibold;
+  line-height: 1.3;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.threadline-prose h1 {
+  font-size: 1.375rem;
+  margin: 1rem 0 0.5rem;
+}
+.threadline-prose h2 {
+  font-size: 1.125rem;
+  margin: 0.875rem 0 0.375rem;
+}
+.threadline-prose h3 {
+  font-size: 1rem;
+  margin: 0.75rem 0 0.375rem;
+}
+.threadline-prose h4,
+.threadline-prose h5,
+.threadline-prose h6 {
+  font-size: 0.875rem;
+  margin: 0.625rem 0 0.25rem;
+}
+
+/* Lists. Markers cycle by depth so nesting is readable; checklist items opt
+ * out via MDXEditor's own list-style-type: none, which wins on specificity. */
+.threadline-prose ul,
+.threadline-prose ol {
+  margin: 0.5rem 0;
+  padding-inline-start: 1.5rem;
+}
+.threadline-prose ul {
+  list-style-position: outside;
+  list-style-type: disc;
+}
+.threadline-prose ul ul {
+  list-style-type: circle;
+}
+.threadline-prose ul ul ul {
+  list-style-type: square;
+}
+.threadline-prose ol {
+  list-style-position: outside;
+  list-style-type: decimal;
+}
+.threadline-prose ol ol {
+  list-style-type: lower-alpha;
+}
+.threadline-prose ol ol ol {
+  list-style-type: lower-roman;
+}
+.threadline-prose li {
+  margin: 0.125rem 0;
+}
+.threadline-prose li::marker {
+  @apply text-muted-foreground;
+}
+/* Nested lists sit tight under their parent item rather than opening a gap. */
+.threadline-prose li > ul,
+.threadline-prose li > ol {
+  margin: 0.125rem 0;
+}
+
+.threadline-prose blockquote {
+  @apply border-border text-muted-foreground border-l-2;
+  margin: 0.625rem 0;
+  padding-inline-start: 0.75rem;
+}
+
+.threadline-prose a {
+  @apply text-primary underline underline-offset-2;
+}
+
+.threadline-prose hr {
+  @apply border-border;
+  margin: 1rem 0;
+  border-top-width: 1px;
+}
+
+.threadline-prose code {
+  @apply bg-muted rounded-sm;
+  padding: 0.0625rem 0.25rem;
+  font-size: 0.8125rem;
+}
+
+.threadline-prose strong {
+  @apply font-semibold;
+}
+
+/* Comment highlights. Applied as Lexical MarkNodes (see caseText.js) and
+   stripped again on export, so they live in the editor only — never in the
+   markdown file. `data-active` is the thread currently focused in the comment
+   panel.
+
+   Deliberately a flat yellow wash with no border and no rounding: a tinted box
+   with an outline reads as inline code, which is exactly what inline `code`
+   already looks like two rules above. A highlighter mark should look like ink
+   on the words, not a container around them. */
+.threadline-prose mark {
+  background-color: #fdf0a8;
+  color: inherit;
+  cursor: pointer;
+  /* Slight negative inline margin + matching padding so the wash extends just
+     past the glyphs, the way a highlighter overshoots, without shifting the
+     text metrics and reflowing the line. */
+  margin-inline: -0.075em;
+  padding-inline: 0.075em;
+  box-shadow: inset 0 -0.05em 0 rgba(0, 0, 0, 0.08);
+}
+
+.threadline-prose mark[data-active] {
+  background-color: #fbdf5c;
+}
+
+/* Overlapping comments nest as MarkNodes inside one another; deepening the
+   wash is what makes the overlap visible at all. */
+.threadline-prose mark mark {
+  background-color: #f9d64a;
+}
+
+/* On a dark page a paper-yellow wash glares and the dark text on it inverts
+   badly, so the tint carries the colour and the text keeps the page's own
+   foreground. */
+.dark .threadline-prose mark {
+  background-color: oklch(0.45 0.09 95);
+  box-shadow: none;
+}
+
+.dark .threadline-prose mark[data-active] {
+  background-color: oklch(0.56 0.12 95);
+}
+
+.dark .threadline-prose mark mark {
+  background-color: oklch(0.6 0.13 95);
+}
+
+/* ---------------------------------------------------------------------------
+ * Table controls.
+ *
+ * MDXEditor renders table row/column controls (the "..." buttons) as always
+ * visible. This makes them subtle by hiding by default and only showing on
+ * hover, scoped to the cell/row/column being interacted with. */
+.mdxeditor table {
+  position: relative;
+}
+
+/* Hide all control buttons by default. */
+.mdxeditor [class*='_tableColumnControlsContainer_'],
+.mdxeditor [class*='_tableRowControlsContainer_'],
+.mdxeditor [class*='_tableControlsTop_'] {
+  opacity: 0;
+  transition: opacity 0.15s ease-in-out;
+  pointer-events: none;
+}
+
+/* Show controls on table hover (reveal the entire control area). */
+.mdxeditor table:hover [class*='_tableColumnControlsContainer_'],
+.mdxeditor table:hover [class*='_tableRowControlsContainer_'],
+.mdxeditor table:hover [class*='_tableControlsTop_'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Reduce unnecessary vertical space between top controls and table.
+   MDXEditor positions these absolutely; tighten the gap. */
+.mdxeditor [class*='_tableControlsTop_'] {
+  margin-bottom: -0.75rem;
+}
