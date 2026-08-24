@@ -24,5 +24,8 @@ contextBridge.exposeInMainWorld('threadlineDesktop', {
   chooseWorkspace: () => ipcRenderer.invoke('threadline:choose-workspace'),
   getCurrentUserEmail: (workspaceDir) => ipcRenderer.invoke('threadline:get-user', workspaceDir),
   getGitStatus: (root) => ipcRenderer.invoke('threadline:git-status', root),
-  syncWorkspace: (root) => ipcRenderer.invoke('threadline:sync', root),
+  syncWorkspace: (root, opts) => ipcRenderer.invoke('threadline:sync', root, opts),
+  listGitHubAccounts: () => ipcRenderer.invoke('threadline:list-github-accounts'),
+  getWorkspaceAccount: (workspaceDir) => ipcRenderer.invoke('threadline:get-workspace-account', workspaceDir),
+  setWorkspaceAccount: (workspaceDir, username) => ipcRenderer.invoke('threadline:set-workspace-account', workspaceDir, username),
 })

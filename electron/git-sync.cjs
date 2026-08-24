@@ -12,6 +12,7 @@
 // process would freeze the window.
 
 const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const { execFile } = require('node:child_process')
 const { promisify } = require('node:util')
@@ -19,6 +20,47 @@ const { promisify } = require('node:util')
 const execFileAsync = promisify(execFile)
 
 const GIT_TIMEOUT_MS = 30_000
+
+// The file the `store` credential helper reads and writes. Pulled out so the
+// account-lister below can find every saved GitHub username without spawning
+// git (which, on a multi-account machine, is exactly the thing that guesses
+// wrong). Plain text: "https://<user>:<token>@github.com", one per line.
+function credentialStorePath() {
+  return path.join(os.homedir(), '.git-credentials')
+}
+
+// Every GitHub username saved in the `store` helper's file, deduplicated and
+// ordered as written. This is the complete list Threadline can authenticate as
+// — deliberately read directly rather than via `git credential fill`, so the
+// answer is certain even when the helper chain itself is ambiguous.
+function listGitHubAccounts() {
+  const file = credentialStorePath()
+  let raw = ''
+  try {
+    raw = fs.readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  const users = []
+  const seen = new Set()
+  for (const line of raw.split(/\r?\n/)) {
+    const m = line.match(/^https:\/\/([^:]+):[^@]+@github\.com\/?$/)
+    if (!m) continue
+    const username = decodeURIComponent(m[1])
+    if (seen.has(username)) continue
+    seen.add(username)
+    users.push({ username })
+  }
+  return users
+}
+
+// Which username the remote URL already names, if any — e.g.
+// "https://brianivander@github.com/..." -> "brianivander". Null when the URL
+// is bare ("https://github.com/...").
+function remoteUserFromUrl(url) {
+  const m = String(url || '').match(/^https:\/\/([^@/]+)@github\.com\//)
+  return m ? decodeURIComponent(m[1]) : null
+}
 
 // Credentials must resolve without anyone being asked, or not at all.
 //
@@ -44,8 +86,13 @@ function gitEnv() {
   return { ...process.env, GIT_TERMINAL_PROMPT: '0' }
 }
 
-async function git(cwd, args) {
-  const { stdout } = await execFileAsync('git', [...CREDENTIAL_ARGS, ...args], {
+async function git(cwd, args, { pushUser } = {}) {
+  // When an account is chosen, force the `store` helper (which can answer from
+  // disk, matching the exact username) and name the account — so a
+  // multi-account machine can't have git guess the wrong token.
+  const pre =
+    pushUser == null ? CREDENTIAL_ARGS : ['-c', 'credential.helper=store', '-c', `credential.username=${pushUser}`]
+  const { stdout } = await execFileAsync('git', [...pre, ...args], {
     cwd,
     encoding: 'utf8',
     timeout: GIT_TIMEOUT_MS,
@@ -56,9 +103,9 @@ async function git(cwd, args) {
 
 // Same call, but a non-zero exit is an answer rather than an error — used for
 // the probes where "this failed" is the information we're after.
-async function gitOk(cwd, args) {
+async function gitOk(cwd, args, opts) {
   try {
-    return await git(cwd, args)
+    return await git(cwd, args, opts)
   } catch {
     return null
   }
@@ -80,6 +127,8 @@ async function describeWorkspace(root) {
 
   if (!(await gitOk(root, ['remote']))) return { state: 'no-remote' }
 
+  const remote = await gitOk(root, ['config', '--get', 'remote.origin.url'])
+
   const upstream = await gitOk(root, ['rev-parse', '--abbrev-ref', '@{u}'])
   if (!upstream) return { state: 'no-upstream' }
 
@@ -95,6 +144,8 @@ async function describeWorkspace(root) {
     ahead,
     behind,
     dirty: dirty ? dirty.split('\n').filter(Boolean).length : 0,
+    remote: remote || null,
+    remoteUser: remoteUserFromUrl(remote),
   }
 }
 
@@ -114,6 +165,10 @@ function classifyFailure(text, err) {
   if (/could not read Username|Authentication failed|terminal prompts disabled|denied/i.test(text)) {
     return 'auth-failed'
   }
+  // "Repository not found" from GitHub is almost never a missing repo — it is
+  // GitHub hiding "this account has no access to this (private/org) repo". The
+  // fix is choosing a different account, not chasing a URL.
+  if (/repository.*not found/i.test(text)) return 'wrong-account'
   if (/timed out|ETIMEDOUT/i.test(text)) return 'timeout'
   return 'push-failed'
 }
@@ -127,7 +182,12 @@ function classifyFailure(text, err) {
 //      never guesses.
 //   3. Stop and report — a real conflict or a dirty tree is handed back to the
 //      user (resolve in GitHub Desktop), never silently merged away.
-async function syncWorkspace(root) {
+//
+// `pushUser` (optional) names the GitHub account to authenticate the push as.
+// When set, the push uses the `store` helper keyed on that exact username, so
+// a machine with several saved accounts pushes with the one the user chose
+// rather than whichever git happens to find first.
+async function syncWorkspace(root, { pushUser } = {}) {
   const status = await describeWorkspace(root)
   if (status.state !== 'ready') return { ok: false, reason: status.state, status }
 
@@ -164,7 +224,7 @@ async function syncWorkspace(root) {
     // Nothing new locally and nothing already waiting — the pull was the whole
     // sync, so skip the push rather than reporting a no-op as work done.
     const pending = await describeWorkspace(root)
-    if (pending.ahead > 0) await git(root, ['push'])
+    if (pending.ahead > 0) await git(root, ['push'], { pushUser })
 
     return { ok: true, committed: files.length, pushed: pending.ahead, status: await describeWorkspace(root) }
   } catch (err) {
@@ -181,4 +241,11 @@ async function syncWorkspace(root) {
   }
 }
 
-module.exports = { describeWorkspace, syncWorkspace, buildCommitMessage, classifyFailure }
+module.exports = {
+  describeWorkspace,
+  syncWorkspace,
+  buildCommitMessage,
+  classifyFailure,
+  listGitHubAccounts,
+  remoteUserFromUrl,
+}

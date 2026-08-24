@@ -9,7 +9,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 
-const { describeWorkspace, syncWorkspace, buildCommitMessage, classifyFailure } = require('./git-sync.cjs')
+const { describeWorkspace, syncWorkspace, buildCommitMessage, classifyFailure, listGitHubAccounts, remoteUserFromUrl } = require('./git-sync.cjs')
 
 function git(cwd, args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -68,6 +68,18 @@ test('classifyFailure recognises a timeout kill by signal, not wording', () => {
   assert.equal(classifyFailure('', { signal: 'SIGTERM' }), 'timeout')
   // A genuine non-zero exit is still classified on its text.
   assert.equal(classifyFailure('Authentication failed', { code: 128 }), 'auth-failed')
+})
+
+test("classifyFailure treats 'Repository not found' as wrong-account, not a missing repo", () => {
+  const githubHide =
+    'fatal: Cannot prompt because user interactivity has been disabled.\nremote: Repository not found.\nfatal: repository https://github.com/org/repo.git/ not found'
+  assert.equal(classifyFailure(githubHide), 'wrong-account')
+})
+
+test('remoteUserFromUrl extracts the username from a username-in-url remote', () => {
+  assert.equal(remoteUserFromUrl('https://briangruntable@github.com/gruntable/books.git'), 'briangruntable')
+  assert.equal(remoteUserFromUrl('https://github.com/gruntable/books.git'), null)
+  assert.equal(remoteUserFromUrl(null), null)
 })
 
 test('describeWorkspace reports each unmet prerequisite', async () => {

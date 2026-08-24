@@ -27,6 +27,7 @@ const REASONS = {
   diverged: 'Your copy and the team’s have both changed — resolve it in GitHub Desktop',
   'dirty-conflict': 'Your local edits clash with incoming changes — resolve in GitHub Desktop',
   'auth-failed': 'Git could not sign you in — check your account in GitHub Desktop',
+  'wrong-account': 'This account can’t push to this repo — choose another account',
   timeout: 'Sync timed out — check your connection and try again',
   'push-failed': 'Could not send your changes up',
 }
@@ -64,6 +65,10 @@ export function useWorkspaceSync({ root }) {
   // shows; this is what makes the difference between diagnosing a failure and
   // guessing at it, so it rides along to the tooltip.
   const [detail, setDetail] = useState(null)
+  // The GitHub accounts saved on this machine and the one chosen for this
+  // workspace — so a multi-account user can pick which identity pushes.
+  const [accounts, setAccounts] = useState([])
+  const [pushUser, setPushUser] = useState(null)
 
   const refresh = useCallback(async () => {
     if (!isElectron || !root) {
@@ -75,11 +80,25 @@ export function useWorkspaceSync({ root }) {
 
   // Switching workspaces swaps both halves of the footer at once — a stale
   // "Last sync 2m ago" from the previous folder would be a lie about this one.
+  // It also reloads the saved GitHub accounts and this workspace's chosen one.
   useEffect(() => {
     setLastSync(root ? readLastSync(root) : null)
     setError(null)
     setDetail(null)
+    setPushUser(null)
     refresh()
+    if (isElectron && root) {
+      window.threadlineDesktop.listGitHubAccounts().then((list) => {
+        setAccounts(list || [])
+        return window.threadlineDesktop.getWorkspaceAccount(root)
+      }).then((saved) => {
+        if (saved) setPushUser(saved)
+      }).catch(() => {
+        /* accounts are best-effort; sync still works without them */
+      })
+    } else {
+      setAccounts([])
+    }
   }, [root, refresh])
 
   const sync = useCallback(async () => {
@@ -88,7 +107,7 @@ export function useWorkspaceSync({ root }) {
     setError(null)
     setDetail(null)
     try {
-      const result = await window.threadlineDesktop.syncWorkspace(root)
+      const result = await window.threadlineDesktop.syncWorkspace(root, { pushUser })
       if (result?.status) setStatus(result.status)
       else await refresh()
 
@@ -112,7 +131,32 @@ export function useWorkspaceSync({ root }) {
     } finally {
       setSyncing(false)
     }
-  }, [root, syncing, refresh])
+  }, [root, syncing, refresh, pushUser])
 
-  return { status, lastSync, syncing, error, detail, sync, refresh }
+  const chooseAccount = useCallback(
+    async (username) => {
+      setPushUser(username)
+      if (isElectron && root) {
+        try {
+          await window.threadlineDesktop.setWorkspaceAccount(root, username)
+        } catch {
+          /* noop */
+        }
+      }
+    },
+    [root],
+  )
+
+  return {
+    status,
+    lastSync,
+    syncing,
+    error,
+    detail,
+    sync,
+    refresh,
+    accounts,
+    pushUser,
+    chooseAccount,
+  }
 }

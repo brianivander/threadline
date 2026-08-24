@@ -9,6 +9,7 @@ import { FolderOpen, GitBranch, RefreshCw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ThemeToggle } from '@/components/theme-toggle'
 import TreeNode from '@/board/TreeNode'
 import { clearDrag, getDrag } from '@/board/dnd'
@@ -39,10 +40,14 @@ function WorkspaceBar({ workspaceName, onOpenWorkspace }) {
 // can't run at all, or when it last did — a "Last sync 2m ago" sitting above
 // an unreported error is the one thing this footer must never show.
 function UserFooter({ userEmail, sync }) {
-  const { status, lastSync, syncing, error, detail, onSync } = sync
+  const { status, lastSync, syncing, error, detail, onSync, accounts, pushUser, chooseAccount } = sync
   const blocked = status && status.state !== 'ready' ? status.state : null
   const ready = !!status && status.state === 'ready'
   const pending = ready ? status.ahead : 0
+
+  // A picker only helps when there is more than one account to choose between;
+  // a single account (or none) needs no UI at all.
+  const showAccounts = accounts.length > 1
 
   const line = error
     ? syncMessage(error)
@@ -63,6 +68,20 @@ function UserFooter({ userEmail, sync }) {
       >
         {userEmail || 'No git email configured'}
       </span>
+      {showAccounts && (
+        <Select value={pushUser || ''} onValueChange={chooseAccount}>
+          <SelectTrigger size="sm" className="h-6 w-full px-2 text-xs" aria-label="GitHub account">
+            <SelectValue placeholder="Choose GitHub account…" />
+          </SelectTrigger>
+          <SelectContent>
+            {accounts.map((a) => (
+              <SelectItem key={a.username} value={a.username}>
+                {a.username}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
       <div className="flex min-w-0 items-center gap-1">
         {ready && status.branch && (
           <span className="text-muted-foreground flex shrink-0 items-center gap-0.5" title={`Branch: ${status.branch}`}>

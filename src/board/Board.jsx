@@ -429,7 +429,11 @@ export default function Board({
                 lastSync: workspaceSync.lastSync,
                 syncing: workspaceSync.syncing,
                 error: workspaceSync.error,
+                detail: workspaceSync.detail,
                 onSync: workspaceSync.sync,
+                accounts: workspaceSync.accounts,
+                pushUser: workspaceSync.pushUser,
+                chooseAccount: workspaceSync.chooseAccount,
               }}
               onOpenWorkspace={onOpenWorkspace}
               onSelectStory={selectStory}

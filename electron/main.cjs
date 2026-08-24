@@ -20,7 +20,7 @@ const { app, BrowserWindow, nativeTheme, session, ipcMain, dialog } = require('e
 const path = require('node:path')
 const fs = require('node:fs')
 const { execFileSync } = require('node:child_process')
-const { describeWorkspace, syncWorkspace } = require('./git-sync.cjs')
+const { describeWorkspace, syncWorkspace, listGitHubAccounts } = require('./git-sync.cjs')
 
 const PROJECT_ROOT = path.resolve(__dirname, '..')
 const DIST_DIR = path.join(PROJECT_ROOT, 'dist')
@@ -195,9 +195,9 @@ function setupSyncHandlers() {
       return { state: 'no-git' }
     }
   })
-  ipcMain.handle('threadline:sync', async (_e, root) => {
+  ipcMain.handle('threadline:sync', async (_e, root, opts) => {
     try {
-      const result = await syncWorkspace(root)
+      const result = await syncWorkspace(root, opts || {})
       // git's stderr, verbatim, in the terminal running the app — a failure
       // should never need a debugging session to identify.
       if (!result.ok) console.error(`Sync failed (${result.reason}):`, result.detail || '(no output)')
@@ -205,6 +205,76 @@ function setupSyncHandlers() {
     } catch (err) {
       console.error('Workspace sync failed:', err)
       return { ok: false, reason: 'push-failed', detail: `${err.message || err}` }
+    }
+  })
+}
+
+// A workspace's chosen push account, keyed on its folder (the same folder the
+// user picked). Stored in the same threadline.db as the user registry, so each
+// workspace remembers which GitHub account it pushes as.
+async function readWorkspaceAccount(workspaceDir) {
+  const table = 'CREATE TABLE IF NOT EXISTS workspace_accounts (workspace_root TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL, created_at TEXT NOT NULL)'
+  const SQL = await getSqlJs()
+  const dbPath = getUserDbPath(workspaceDir)
+  const db = fs.existsSync(dbPath) ? new SQL.Database(fs.readFileSync(dbPath)) : new SQL.Database()
+  let username = null
+  try {
+    db.run(table)
+    const stmt = db.prepare('SELECT username FROM workspace_accounts WHERE workspace_root = ?')
+    stmt.bind([workspaceDir])
+    if (stmt.step()) username = stmt.getAsObject().username
+    stmt.free()
+  } finally {
+    db.close()
+  }
+  return username
+}
+
+async function writeWorkspaceAccount(workspaceDir, username) {
+  const table = 'CREATE TABLE IF NOT EXISTS workspace_accounts (workspace_root TEXT PRIMARY KEY NOT NULL, username TEXT NOT NULL, created_at TEXT NOT NULL)'
+  const SQL = await getSqlJs()
+  const dbPath = getUserDbPath(workspaceDir)
+  const db = fs.existsSync(dbPath) ? new SQL.Database(fs.readFileSync(dbPath)) : new SQL.Database()
+  db.run(table)
+  db.run('INSERT OR REPLACE INTO workspace_accounts (workspace_root, username, created_at) VALUES (?, ?, ?)', [
+    workspaceDir,
+    username,
+    new Date().toISOString(),
+  ])
+  fs.writeFileSync(dbPath, Buffer.from(db.export()))
+  db.close()
+  return username
+}
+
+let accountHandlersReady = false
+function setupAccountHandlers() {
+  if (accountHandlersReady) return
+  accountHandlersReady = true
+  // The GitHub accounts saved on this machine (from the `store` credential
+  // helper's file) — read directly so the renderer can offer a picker without
+  // ever asking git to guess.
+  ipcMain.handle('threadline:list-github-accounts', async () => {
+    try {
+      return listGitHubAccounts()
+    } catch (err) {
+      console.error('Failed to list GitHub accounts:', err)
+      return []
+    }
+  })
+  ipcMain.handle('threadline:get-workspace-account', async (_e, workspaceDir) => {
+    try {
+      return await readWorkspaceAccount(workspaceDir)
+    } catch (err) {
+      console.error('Failed to read workspace account:', err)
+      return null
+    }
+  })
+  ipcMain.handle('threadline:set-workspace-account', async (_e, workspaceDir, username) => {
+    try {
+      return await writeWorkspaceAccount(workspaceDir, username)
+    } catch (err) {
+      console.error('Failed to save workspace account:', err)
+      return null
     }
   })
 }
@@ -291,6 +361,7 @@ async function createWindow() {
   setupWorkspaceHandlers()
   setupUserHandler()
   setupSyncHandlers()
+  setupAccountHandlers()
 
   // Google's "Continue with Google" flow opens its sign-in as a popup, not a
   // same-window navigation. <webview allowpopups> only stops it being blocked;
