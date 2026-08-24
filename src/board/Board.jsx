@@ -436,6 +436,7 @@ export default function Board({
                 accounts: workspaceSync.accounts,
                 pushUser: workspaceSync.pushUser,
                 chooseAccount: workspaceSync.chooseAccount,
+                checkingAccounts: workspaceSync.checkingAccounts,
               }}
               onOpenWorkspace={onOpenWorkspace}
               onSelectStory={selectStory}

@@ -69,6 +69,7 @@ export function useWorkspaceSync({ root }) {
   // workspace — so a multi-account user can pick which identity pushes.
   const [accounts, setAccounts] = useState([])
   const [pushUser, setPushUser] = useState(null)
+  const [checkingAccounts, setCheckingAccounts] = useState(false)
 
   const refresh = useCallback(async () => {
     if (!isElectron || !root) {
@@ -89,17 +90,32 @@ export function useWorkspaceSync({ root }) {
     setAccounts([])
     refresh()
     if (isElectron && root) {
+      setCheckingAccounts(true)
       window.threadlineDesktop
         .validateAccounts(root)
         .then((list) => {
           setAccounts(list || [])
-          return window.threadlineDesktop.getWorkspaceAccount(root)
+          return window.threadlineDesktop.getWorkspaceAccount(root).then((saved) => ({ list: list || [], saved }))
         })
-        .then((saved) => {
-          if (saved) setPushUser(saved)
+        .then(({ list, saved }) => {
+          // A remembered choice wins. Otherwise, if exactly one account can
+          // access the repo, use it silently — no dropdown needed, and the
+          // push goes out under that account.
+          if (saved) {
+            setPushUser(saved)
+          } else {
+            const accessible = list.filter((a) => a.canAccess !== false)
+            if (accessible.length === 1) {
+              setPushUser(accessible[0].username)
+              window.threadlineDesktop.setWorkspaceAccount(root, accessible[0].username).catch(() => {})
+            }
+          }
         })
         .catch(() => {
           /* accounts are best-effort; sync still works without them */
+        })
+        .finally(() => {
+          setCheckingAccounts(false)
         })
     }
   }, [root, refresh])
@@ -163,5 +179,6 @@ export function useWorkspaceSync({ root }) {
     accounts,
     pushUser,
     chooseAccount,
+    checkingAccounts,
   }
 }

@@ -40,17 +40,18 @@ function WorkspaceBar({ workspaceName, onOpenWorkspace }) {
 // can't run at all, or when it last did — a "Last sync 2m ago" sitting above
 // an unreported error is the one thing this footer must never show.
 function UserFooter({ onUserEmailChange, sync }) {
-  const { status, lastSync, syncing, error, detail, onSync, accounts, pushUser, chooseAccount } = sync
+  const { status, lastSync, syncing, error, detail, onSync, accounts, pushUser, chooseAccount, checkingAccounts } = sync
   const blocked = status && status.state !== 'ready' ? status.state : null
   const ready = !!status && status.state === 'ready'
   const pending = ready ? status.ahead : 0
 
-  // The dropdown is the one place identity is shown — each entry is the account's
-  // full email (so two accounts sharing a front name stay distinguishable), and
-  // the commit itself is stamped with the username. No separate email line.
-  const showAccounts = accounts.length > 1
+  // The dropdown lists only accounts that can actually reach this repo. One
+  // accessible account is shown as a plain label (no choice to make); several
+  // become a picker; none becomes the "can't access" note.
   const accessible = accounts.filter((a) => a.canAccess !== false)
   const noneAccessible = accounts.length > 0 && accessible.length === 0
+  const showDropdown = accessible.length > 1
+  const singleAccessible = accessible.length === 1 ? accessible[0] : null
 
   async function handleChooseAccount(username) {
     const result = await chooseAccount(username)
@@ -67,21 +68,24 @@ function UserFooter({ onUserEmailChange, sync }) {
 
   return (
     <div className="bg-muted/40 flex shrink-0 flex-col gap-0.5 border-t px-3 py-1.5 text-xs">
-      {noneAccessible ? (
+      {checkingAccounts ? (
+        <span className="text-muted-foreground animate-pulse">Checking saved accounts…</span>
+      ) : noneAccessible ? (
         <span className="text-destructive min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title="None of your saved GitHub accounts can access this repo. Log in with the right account in GitHub Desktop, then reopen this workspace.">
           No saved account can access this repo
         </span>
+      ) : singleAccessible ? (
+        <span className="text-muted-foreground min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">{singleAccessible.username}</span>
       ) : (
-        showAccounts && (
+        showDropdown && (
           <Select value={pushUser || ''} onValueChange={handleChooseAccount}>
             <SelectTrigger size="sm" className="h-6 w-full px-2 text-xs" aria-label="GitHub account">
               <SelectValue placeholder="Choose GitHub account…" />
             </SelectTrigger>
             <SelectContent>
-              {accounts.map((a) => (
-                <SelectItem key={a.username} value={a.username} disabled={a.canAccess === false}>
+              {accessible.map((a) => (
+                <SelectItem key={a.username} value={a.username}>
                   {a.username}
-                  {a.canAccess === false ? ' · no access' : ''}
                 </SelectItem>
               ))}
             </SelectContent>

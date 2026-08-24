@@ -314,11 +314,14 @@ function setupAccountHandlers() {
       const status = await describeWorkspace(workspaceDir)
       if (status.state !== 'ready' || !status.remote) return []
       const accounts = listGitHubAccounts()
-      const result = []
-      for (const a of accounts) {
-        const canAccess = await probeAccountAccess(workspaceDir, status.remote, a.username)
-        result.push({ username: a.username, canAccess })
-      }
+      // Probe every account in parallel — sequential probing is what made the
+      // picker take ~5s per account. Independent, so they run together.
+      const result = await Promise.all(
+        accounts.map(async (a) => ({
+          username: a.username,
+          canAccess: await probeAccountAccess(workspaceDir, status.remote, a.username),
+        })),
+      )
       return result
     } catch (err) {
       console.error('Failed to validate accounts:', err)
