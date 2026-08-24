@@ -118,9 +118,15 @@ function classifyFailure(text, err) {
   return 'push-failed'
 }
 
-// pull --ff-only, never a plain pull: a background button that silently
-// authors merge commits produces history nobody can account for. If the
-// branches have genuinely diverged this stops and says so.
+// Sync in three tiers, escalating only when the gentler step fails:
+//   1. pull --ff-only — fast-forward when we're simply behind; no history is
+//      rewritten and no commits are added.
+//   2. pull --rebase — the branches diverged, so replay our local commits on
+//      top of the remote's instead of refusing. Safe: when a genuine conflict
+//      exists (same lines changed), rebase stops cleanly and reports it, it
+//      never guesses.
+//   3. Stop and report — a real conflict or a dirty tree is handed back to the
+//      user (resolve in GitHub Desktop), never silently merged away.
 async function syncWorkspace(root) {
   const status = await describeWorkspace(root)
   if (status.state !== 'ready') return { ok: false, reason: status.state, status }
@@ -128,9 +134,25 @@ async function syncWorkspace(root) {
   try {
     await git(root, ['pull', '--ff-only'])
   } catch (err) {
+    // First pull failed. Try rebase, which handles the diverged case — unless
+    // the failure was a dirty tree (uncommitted changes), which rebase also
+    // can't help and would only make worse.
     const text = `${err.stderr || err.message || ''}`
-    const reason = /would be overwritten|local changes/i.test(text) ? 'dirty-conflict' : 'diverged'
-    return { ok: false, reason, detail: text.trim(), status: await describeWorkspace(root) }
+    if (/would be overwritten|local changes/i.test(text)) {
+      return { ok: false, reason: 'dirty-conflict', detail: text.trim(), status: await describeWorkspace(root) }
+    }
+    try {
+      await git(root, ['pull', '--rebase'])
+    } catch (rebaseErr) {
+      const rebaseText = `${rebaseErr.stderr || rebaseErr.message || ''}`
+      // A rebase conflict stops mid-way; abort so the working tree isn't left
+      // half-rebased for the next attempt to trip over.
+      await gitOk(root, ['rebase', '--abort'])
+      if (/CONFLICT|conflict|would be overwritten/i.test(rebaseText)) {
+        return { ok: false, reason: 'diverged', detail: rebaseText.trim(), status: await describeWorkspace(root) }
+      }
+      return { ok: false, reason: classifyFailure(rebaseText, rebaseErr), detail: rebaseText.trim(), status: await describeWorkspace(root) }
+    }
   }
 
   try {

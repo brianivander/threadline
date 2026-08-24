@@ -160,7 +160,7 @@ test('syncWorkspace fails fast on an unreachable remote rather than hanging', as
   assert.ok(result.detail, 'the failure must carry git’s own output for diagnosis')
 })
 
-test('syncWorkspace refuses to merge diverged history', async () => {
+test('syncWorkspace resolves diverged history by rebasing', async () => {
   const { clones } = makeRepos(2)
   const [mine, theirs] = clones
 
@@ -175,8 +175,30 @@ test('syncWorkspace refuses to merge diverged history', async () => {
   git(mine, ['commit', '-qm', 'mine'])
 
   const result = await syncWorkspace(mine)
+  assert.equal(result.ok, true, `sync failed: ${result.reason} ${result.detail || ''}`)
+  // The two histories are now one line: my commit rebased on top of theirs.
+  assert.ok(fs.existsSync(path.join(mine, 'theirs.md')), 'their file should have arrived')
+  assert.ok(fs.existsSync(path.join(mine, 'mine.md')), 'my file should still be there')
+})
+
+test('syncWorkspace stops on a genuine conflict rather than guessing', async () => {
+  const { clones } = makeRepos(2)
+  const [mine, theirs] = clones
+
+  // Both edit the SAME file's SAME line differently — a genuine conflict that
+  // rebase cannot resolve without a human deciding.
+  fs.writeFileSync(path.join(theirs, 'shared.md'), 'theirs version\n')
+  git(theirs, ['add', '-A'])
+  git(theirs, ['commit', '-qm', 'theirs'])
+  git(theirs, ['push', '-q'])
+
+  fs.writeFileSync(path.join(mine, 'shared.md'), 'mine version\n')
+  git(mine, ['add', '-A'])
+  git(mine, ['commit', '-qm', 'mine'])
+
+  const result = await syncWorkspace(mine)
   assert.equal(result.ok, false)
   assert.equal(result.reason, 'diverged')
-  // Critically: it stopped rather than authoring a merge commit.
+  // It aborted the doomed rebase and left my commit intact.
   assert.equal(git(mine, ['log', '-1', '--format=%s']), 'mine')
 })
