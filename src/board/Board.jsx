@@ -357,6 +357,7 @@ export default function Board({
   const storyPanel = (
     <StoryPanel
       story={selectedStory}
+      root={root}
       activeCaseIndex={activeCaseIndex}
       onToggleSidebar={toggleSidebar}
       onUpdateStory={actions.updateStory}

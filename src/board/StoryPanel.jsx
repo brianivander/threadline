@@ -37,6 +37,7 @@ import {
 import CaseEditor from '@/board/CaseEditor'
 import { clearDrag, getDrag, setDrag } from '@/board/dnd'
 import { TAG_COLORS, swatchStyle, tagColorLabel, tagStyle } from '@/board/linkTags'
+import { isAbsolutePath, storyDirOf, toRelativePath } from '@/lib/paths'
 
 const CRITICALITIES = ['P1', 'P2', 'P3', 'P4']
 const MAX_CASES = 10
@@ -79,6 +80,7 @@ function parseLinks(raw) {
 
 export default function StoryPanel({
   story,
+  root,
   activeCaseIndex,
   onToggleSidebar,
   onUpdateStory,
@@ -129,6 +131,10 @@ export default function StoryPanel({
 
   const storyId = story?.id
   const cases = story?.cases || []
+
+  // The absolute folder this story lives in — the base every relative link is
+  // resolved against, and the anchor a pasted absolute path is rebased onto.
+  const storyDir = storyDirOf(root, storyId)
 
   // Committing a title rename changes the file's id, so a self-rename looks
   // like a story switch. Only resync the title draft when the user isn't in
@@ -203,9 +209,13 @@ export default function StoryPanel({
   // ---- links ---------------------------------------------------------------
 
   // One patch path for all three fields of a row — the url, the tag, and the
-  // colour picked from the swatches all share the debounce.
+  // colour picked from the swatches all share the debounce. A pasted absolute
+  // filesystem path is rebased onto the story's folder as a relative path
+  // immediately, so the shared repo stays portable across machines.
   function onLinkInput(i, patch) {
-    const next = linksDraft.map((l, idx) => (idx === i ? { ...l, ...patch } : l))
+    const next = linksDraft.map((l, idx) =>
+      idx === i ? { ...l, ...patch, url: toRelativePath(patch.url ?? l.url, storyDir) } : l,
+    )
     setLinksDraft(next)
     clearTimeout(linksTimer.current)
     linksTimer.current = setTimeout(() => commitLinks(next), DEBOUNCE_MS)
@@ -237,7 +247,7 @@ export default function StoryPanel({
   function commitLinks(draft) {
     if (!story) return
     const value = draft
-      .map((l) => ({ url: l.url.trim(), tag: l.tag.trim(), color: l.color }))
+      .map((l) => ({ url: toRelativePath(l.url, storyDir).trim(), tag: l.tag.trim(), color: l.color }))
       .filter((l) => l.url)
     onUpdateStory({ storyId: story.id, field: 'links', value })
   }
@@ -457,7 +467,7 @@ export default function StoryPanel({
                     </div>
                     <Input
                       className="h-7 flex-1 text-[13px]"
-                      placeholder="https://…"
+                      placeholder="https://… or a local file path"
                       value={link.url}
                       onChange={(e) => onLinkInput(i, { url: e.target.value })}
                     />

@@ -28,7 +28,10 @@ function hostnameLabel(url) {
 function normalizeUrl(raw) {
   const trimmed = (raw || '').trim()
   if (!trimmed) return trimmed
-  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  // Any explicit scheme — https, file, etc. — passes through untouched. Only a
+  // bare value (e.g. "figma.com") gets https:// guessed onto it, so a resolved
+  // file:/// link to a local document isn't mangled into https://file://….
+  return /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`
 }
 
 // Outside Electron the <iframe> is cross-origin and fires no favicon events, so
@@ -85,6 +88,10 @@ function BrowserTab({ url, active, isElectron, onNavigate, onFavicon }) {
     if (!isElectron || !containerRef.current || !url) return
     const el = document.createElement('webview')
     el.setAttribute('partition', EMBED_PARTITION)
+    // Allow file:/// pages (story links to local HTML/docs) to load and to
+    // fetch their own relative assets from disk. Without this the webview's
+    // web security blocks local files entirely.
+    el.setAttribute('webpreferences', 'allowFileAccess')
     // Google's OAuth "Continue with Google" flow opens a popup window; without
     // this the webview blocks it outright and the parent page reports a
     // generic profile-fetch failure with no further detail.

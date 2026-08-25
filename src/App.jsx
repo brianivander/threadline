@@ -4,6 +4,7 @@ import EmbedViewer from '@/components/EmbedViewer'
 import Board from '@/board/Board'
 import ThreadlinePanel from '@/board/ThreadlinePanel'
 import { useThreadlineSync, workspaceNameOf } from '@/board/useThreadlineSync'
+import { resolveLocalLink, storyDirOf } from '@/lib/paths'
 
 const LAST_WORKSPACE_KEY = 'threadline_last_workspace'
 const BROWSER_OPEN_KEY = 'threadline_browser_open'
@@ -60,13 +61,16 @@ export default function App() {
   const toggleBrowser = useCallback(() => setBrowser(!browserOpen), [browserOpen, setBrowser])
 
   // Opening a link always reveals the browser — a tab loading behind a
-  // collapsed panel would look like nothing happened.
+  // collapsed panel would look like nothing happened. A link can be a web URL
+  // or a filesystem path; relative paths are resolved against the selected
+  // story's folder before being handed to the embed panel.
   const openLink = useCallback(
     (url) => {
+      const resolved = resolveLocalLink(url, storyDirOf(root, selectedStoryId))
       setBrowser(true)
-      embedViewerRef.current?.openUrl(url)
+      embedViewerRef.current?.openUrl(resolved)
     },
-    [setBrowser],
+    [setBrowser, root, selectedStoryId],
   )
 
   async function handleOpenWorkspace() {
