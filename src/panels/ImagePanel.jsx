@@ -8,13 +8,22 @@
 // Read-only, deliberately. This is for looking at the mockup next to the story
 // that describes it — the thing the tree exists to keep together.
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
-export default function ImagePanel({ filePath, title }) {
-  // Reset per file: a broken path must not leave the next image showing an
-  // error, and a fixed one must not stay broken.
+// `reloadSignal` changes when the file may have been rewritten underneath us —
+// a sync that pulled. /raw is served no-store, but an <img> already showing
+// bytes won't go back for more unless its src changes, so it rides along in the
+// URL as well as the key.
+export default function ImagePanel({ filePath, title, reloadSignal = 0 }) {
   const [failed, setFailed] = useState(false)
-  const src = filePath ? `/api/threadline/raw?path=${encodeURIComponent(filePath)}` : ''
+  const src = filePath
+    ? `/api/threadline/raw?path=${encodeURIComponent(filePath)}&v=${reloadSignal}`
+    : ''
+
+  // Reset per file, and per reload: a broken path must not leave the next image
+  // showing an error, and a pull that restores a missing file must not leave the
+  // panel still claiming it's gone.
+  useEffect(() => setFailed(false), [filePath, reloadSignal])
 
   if (!filePath) return null
 
@@ -29,7 +38,7 @@ export default function ImagePanel({ filePath, title }) {
           <img
             // Keyed on the path so switching tabs swaps the element rather than
             // reusing one that still holds the previous image's failed state.
-            key={filePath}
+            key={`${filePath}:${reloadSignal}`}
             src={src}
             alt={title || 'Image'}
             // Fits the column without being blown up past its real size — a

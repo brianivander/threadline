@@ -1,8 +1,10 @@
 // Story file format — the on-disk representation of one story.
 //
-// The `<!-- threadline-story -->` marker on the second line is what separates
-// a story from any other markdown file sitting in the same workspace folder —
-// see isStoryFile() below.
+// A story is a `.s.md` file — the extension is what separates it from any
+// other markdown sitting in the same workspace folder (see repo.js). The
+// `<!-- threadline-story -->` marker is still written into every story, so a
+// file that has been renamed out of its extension can still be recognized for
+// what it is — see isStoryFile() below.
 //
 //   ---
 //   criticality: P1
@@ -58,10 +60,10 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 
 // `<!-- threadline-story -->` on a line of its own, written directly under the
 // frontmatter — the file's declaration that it IS a Threadline story and not
-// merely a markdown file that happens to live in the workspace. The sidebar
-// lists every `.md` in the folder now, and a PRD, a TRD or a README opened
-// from it must not arrive wearing case tabs, a criticality and a comment
-// section it has no business having.
+// merely a markdown file that happens to live in the workspace. The `.s.md`
+// extension is what the app routes on; this makes the file say the same thing
+// from the inside, so a story copied to a plain `.md` name (or written before
+// the extension existed) is still identifiable as one.
 //
 // An HTML comment rather than a frontmatter key, for the same reasons the case
 // and comment markers are: it stays invisible in every markdown renderer, it
@@ -382,14 +384,20 @@ function serializeThreads(threads) {
   return blocks.join('\n\n')
 }
 
-// Does this markdown file claim to be a Threadline story?
+// Does the TEXT of this markdown file claim to be a Threadline story?
+//
+// NOT what decides a tree row's kind — that is the `.s.md` extension, and this
+// is deliberately never consulted there: two definitions of "is a story" that
+// can disagree is exactly the thing the extension exists to end. This answers
+// the different question of what an arbitrary markdown file's contents are, so
+// a story written before the extension existed (or copied to a `.md` name) can
+// be found and renamed rather than quietly read as a document.
 //
 // The `<!-- threadline-story -->` marker is the rule. The two fallbacks below
 // exist for files written before the marker did — every story this app has
 // ever saved carries either an explicit case/comments marker or a
 // `criticality` frontmatter key, and both are structure no plain document
-// would have. Those files gain the marker the next time they are written, so
-// the fallbacks are a migration path rather than a second definition.
+// would have.
 //
 // Deliberately NOT a signal: having a body at all. splitCases() reads a
 // marker-less body as one implicit "Case 1", so "it parsed into a case" is

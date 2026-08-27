@@ -234,6 +234,12 @@ async function syncWorkspace(root, { pushUser } = {}) {
   const status = await describeWorkspace(root)
   if (status.state !== 'ready') return { ok: false, reason: status.state, status }
 
+  // HEAD before the pull, so the caller can be told whether the pull actually
+  // brought anything down. The renderer reads every file off disk once and
+  // caches it, so incoming work is invisible until it re-reads — and it can
+  // only know to do that if we say the disk changed underneath it.
+  const headBefore = await gitOk(root, ['rev-parse', 'HEAD'])
+
   try {
     await git(root, ['pull', '--ff-only'])
   } catch (err) {
@@ -258,6 +264,11 @@ async function syncWorkspace(root, { pushUser } = {}) {
     }
   }
 
+  // Read HERE, before the local commit below moves HEAD for a reason that has
+  // nothing to do with incoming work — comparing after the commit would report
+  // every sync as having pulled something.
+  const pulled = (await gitOk(root, ['rev-parse', 'HEAD'])) !== headBefore
+
   try {
     await git(root, ['add', '-A'])
     const staged = await gitOk(root, ['diff', '--cached', '--name-only'])
@@ -269,7 +280,7 @@ async function syncWorkspace(root, { pushUser } = {}) {
     const pending = await describeWorkspace(root)
     if (pending.ahead > 0) await git(root, ['push'], { pushUser })
 
-    return { ok: true, committed: files.length, pushed: pending.ahead, status: await describeWorkspace(root) }
+    return { ok: true, committed: files.length, pushed: pending.ahead, pulled, status: await describeWorkspace(root) }
   } catch (err) {
     const text = `${err.stderr || err.message || ''}`
     // Loud, right here, every failure: git's own words in the process console,

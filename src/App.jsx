@@ -7,8 +7,10 @@ import { useEditorTabs } from '@/board/useEditorTabs'
 import {
   fromFileUrl,
   isLocalMarkdownUrl,
+  isStoryPath,
   resolveLocalLink,
   storyDirOf,
+  titleOf,
   workspaceIdOf,
   workspacePathOf,
 } from '@/lib/paths'
@@ -16,15 +18,6 @@ import {
 const LAST_WORKSPACE_KEY = 'threadline_last_workspace'
 const BROWSER_OPEN_KEY = 'threadline_browser_open'
 const isElectron = typeof window !== 'undefined' && !!window.threadlineDesktop?.isElectron
-
-// A file's display name: its filename with the extension taken off, matching
-// what the repo does for a tree row. Used for tabs opened by absolute path,
-// where there is no node to take a title from.
-function titleOf(absPath) {
-  const base = String(absPath || '').split(/[\\/]/).pop() || ''
-  const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(0, dot) : base
-}
 
 export default function App() {
   const browserRef = useRef(null)
@@ -89,8 +82,18 @@ export default function App() {
     searching,
     cases,
     setCases,
+    reloadAll,
+    refetchCases,
     actions,
   } = useThreadlineSync({ root, storyId: selectedStoryId, onFileIdChange, onFolderRepath })
+
+  // Re-read the workspace from disk. Used when the files changed without this
+  // app doing it — a sync pulling a teammate's work down — where the tree, and
+  // the open story's cases with it, are both drawn from content that has moved.
+  const reloadTree = useCallback(
+    () => Promise.all([reloadAll(), refetchCases()]),
+    [reloadAll, refetchCases],
+  )
 
   // Auto-detect the current user from the workspace's git config (no login)
   // and register them in threadline.db on first sight — see main.cjs's
@@ -114,13 +117,19 @@ export default function App() {
 
   const toggleBrowser = useCallback(() => setBrowser(!browserOpen), [browserOpen, setBrowser])
 
-  // Open a markdown document by absolute path — a story link's target, which
-  // may resolve outside the workspace entirely and so has no id. Inside the
+  // Open a markdown file by absolute path — a story link's target, which may
+  // resolve outside the workspace entirely and so has no id. Inside the
   // workspace it gets its id too, so a rename can follow it.
+  //
+  // A `.s.md` opens as the story it is, but only from inside the workspace:
+  // the story API is addressed by id, and a story in someone else's repo has
+  // none. That one reads as the document it also is.
   const openDoc = useCallback(
     (absPath) => {
       if (!absPath) return
-      openTab({ path: absPath, id: workspaceIdOf(root, absPath) || null, kind: 'doc', title: titleOf(absPath) })
+      const id = workspaceIdOf(root, absPath) || null
+      const kind = id && isStoryPath(absPath) ? 'story' : 'doc'
+      openTab({ path: absPath, id, kind, title: titleOf(absPath) })
     },
     [openTab, root],
   )
@@ -194,6 +203,7 @@ export default function App() {
       searching={searching}
       cases={cases}
       setCases={setCases}
+      reloadTree={reloadTree}
       actions={actions}
       root={root}
       tabs={tabs}

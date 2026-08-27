@@ -4,7 +4,7 @@
 // lives with the tree itself in useThreadlineSync. The panels themselves live in `src/panels`, arranged by PanelLayout.
 // Persistence goes out through the `actions` object from useThreadlineSync.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   AlertDialog,
@@ -113,6 +113,7 @@ export default function Board({
   searching,
   cases,
   setCases,
+  reloadTree,
   actions,
   root,
   tabs,
@@ -154,10 +155,87 @@ export default function Board({
     users,
     error: commentError,
     actions: commentActions,
+    refresh: refreshComments,
     mentionCount,
   } = useComments({ root, storyId: selectedStoryId, userEmail })
 
-  const workspaceSync = useWorkspaceSync({ root })
+  // Bumped when the files changed underneath us, to tell the panels that read a
+  // file directly by path — the doc, text and image ones — to read it again.
+  // The tree and the comments refresh through their own hooks; these three hold
+  // the contents of one file each, which no hook knows about.
+  const [diskToken, setDiskToken] = useState(0)
+
+  // A sync that pulled means every open file may now be a different file. Read
+  // it all again rather than reloading the window: a reload would empty the tab
+  // row, reset the browser panel, and — because React unmount effects don't run
+  // on a page reload — drop whatever save was still sitting on its debounce.
+  const onPulled = useCallback(async () => {
+    await Promise.all([reloadTree?.(), refreshComments()])
+    setDiskToken((n) => n + 1)
+  }, [reloadTree, refreshComments])
+
+  const workspaceSync = useWorkspaceSync({ root, onPulled })
+
+  // ---- unsaved work ----------------------------------------------------------
+  //
+  // The body editors save manually (Ctrl+S), so at any moment the text on screen
+  // may not be the text on disk. Exactly one body editor is mounted at a time —
+  // the active tab decides which, and a story's case tabs unmount each other —
+  // so a single slot holds the whole picture.
+  //
+  // Board owns this rather than the panels because the panels can't see the
+  // thing that would destroy the work: a click on another tab, another file, or
+  // another case happens out here.
+  const editorSave = useRef({ dirty: false, save: null, discard: null })
+  const [editorDirty, setEditorDirty] = useState(false)
+  const [pendingLeave, setPendingLeave] = useState(null)
+
+  const onSaveStateChange = useCallback((next) => {
+    editorSave.current = next
+    setEditorDirty(next.dirty)
+  }, [])
+
+  // An image tab, or no tab at all, has no editor to report — so nothing would
+  // clear a dirty flag left behind by the editor that just unmounted.
+  useEffect(() => {
+    if (activeTab && activeTab.kind !== 'image') return
+    editorSave.current = { dirty: false, save: null, discard: null }
+    setEditorDirty(false)
+  }, [activeTab])
+
+  // Run `go`, unless doing so would discard unsaved work — in which case hold
+  // it until the user has answered for it. Every navigation that unmounts an
+  // editor goes through here.
+  //
+  // `part` says what the move actually puts at risk. Switching CASE TABS
+  // unmounts the body but leaves the story's params sitting there untouched, so
+  // it asks about the body alone — prompting for params there would be a dialog
+  // about work that was never in danger.
+  const guardLeave = useCallback((go, part = 'all') => {
+    const state = editorSave.current
+    const target = part === 'case' && state.case ? state.case : state
+    if (!target.dirty) return go()
+    setPendingLeave({ go, target })
+  }, [])
+
+  const resolveLeave = useCallback(
+    async (choice) => {
+      const held = pendingLeave
+      if (!held) return
+      if (choice === 'save') {
+        // Only leave if the write actually landed. On failure the dialog stays
+        // put and the panel shows why — navigating away here would lose the
+        // text the failed save was trying to protect.
+        const saved = await held.target.save?.()
+        if (saved === false) return
+      } else {
+        held.target.discard?.()
+      }
+      setPendingLeave(null)
+      held.go()
+    },
+    [pendingLeave],
+  )
 
   // A tree node carries metadata only — its cases come from their own fetch
   // (see useThreadlineSync). Re-attached here so every consumer below still
@@ -248,21 +326,22 @@ export default function Board({
   // the comment is anchored in another tab would show a story with no visible
   // highlight.
   function selectStory(storyId, caseName) {
-    onSelectStory(storyId)
-    // The new story's cases haven't been fetched yet, so the tab holding this
-    // comment can't be resolved here — hold the name for the effect below.
-    setPendingCaseName(caseName || null)
-    setActiveCaseIndex(0)
-    // A held selection belongs to the case we're leaving, and a focused thread
-    // to the story we're leaving — neither means anything in the new one.
-    setPendingAnchor(null)
-    setActiveThreadId(null)
+    guardLeave(() => {
+      onSelectStory(storyId)
+      // The new story's cases haven't been fetched yet, so the tab holding this
+      // comment can't be resolved here — hold the name for the effect below.
+      setPendingCaseName(caseName || null)
+      setActiveCaseIndex(0)
+      // A held selection belongs to the case we're leaving, and a focused thread
+      // to the story we're leaving — neither means anything in the new one.
+      setPendingAnchor(null)
+      setActiveThreadId(null)
+    })
   }
 
   // Clicking a file, wherever it was clicked — the tree or a search result.
-  // What happens is decided by its `kind`, set by the repo from the file itself
-  // (see repo.js) and not by its extension here, because a `.md` can be either
-  // a story or a plain document and only its contents say which.
+  // What happens is decided by its `kind`, which the repo reads off the
+  // filename (see repo.js): a story is a `.s.md`, any other markdown a doc.
   //
   //   story          a tab: the story editor
   //   doc            a tab: the markdown editor
@@ -276,20 +355,24 @@ export default function Board({
     if (!node) return
     const path = workspacePathOf(root, node.id)
 
+    // A PDF goes to the browser panel and leaves the editor where it is, so
+    // there is nothing to lose and nothing to ask about.
     if (node.kind === 'pdf') {
       onOpenLink(path)
       return
     }
     if (TAB_KINDS.includes(node.kind)) {
-      onOpenTab({ path, id: node.id, kind: node.kind, title: node.title, ext: node.ext })
-      // A story's case tabs and any held selection belong to the story we came
-      // from, not the one arriving.
-      if (node.kind === 'story') {
-        setPendingCaseName(null)
-        setActiveCaseIndex(0)
-        setPendingAnchor(null)
-        setActiveThreadId(null)
-      }
+      guardLeave(() => {
+        onOpenTab({ path, id: node.id, kind: node.kind, title: node.title, ext: node.ext })
+        // A story's case tabs and any held selection belong to the story we came
+        // from, not the one arriving.
+        if (node.kind === 'story') {
+          setPendingCaseName(null)
+          setActiveCaseIndex(0)
+          setPendingAnchor(null)
+          setActiveThreadId(null)
+        }
+      })
       return
     }
     setUnopenable({ title: node.title, ext: node.ext })
@@ -456,7 +539,13 @@ export default function Board({
       onUpdateStory={actions.updateStory}
       onUpdateCase={actions.updateCase}
       onAddCase={actions.addCase}
-      onSelectCase={setActiveCaseIndex}
+      // Case tabs unmount each other's editor, so switching between them can
+      // lose an unsaved body — but not the params, which stay put.
+      onSelectCase={(index) =>
+        index === activeCaseIndex ? undefined : guardLeave(() => setActiveCaseIndex(index), 'case')
+      }
+      reloadSignal={diskToken}
+      onSaveStateChange={onSaveStateChange}
       onRenameCase={actions.renameCase}
       onReorderCase={reorderCase}
       onCaseDuplicateRequest={({ caseId, storyId, name }) =>
@@ -481,6 +570,8 @@ export default function Board({
     <DocPanel
       filePath={activeTab?.path || ''}
       root={root}
+      reloadSignal={diskToken}
+      onSaveStateChange={onSaveStateChange}
     />
   )
 
@@ -492,8 +583,14 @@ export default function Board({
       <EditorBar
         tabs={tabs}
         activeKey={activeTab?.key || null}
-        onActivateTab={onActivateTab}
-        onCloseTab={onCloseTab}
+        // Only a move that unmounts the OPEN editor can lose work. Re-clicking
+        // the active tab isn't a move, and closing one of the others doesn't
+        // touch it — neither should be interrupted with a dialog.
+        onActivateTab={(key) => (key === activeTab?.key ? undefined : guardLeave(() => onActivateTab(key)))}
+        onCloseTab={(key) =>
+          key === activeTab?.key ? guardLeave(() => onCloseTab(key)) : onCloseTab(key)
+        }
+        dirtyKey={editorDirty ? activeTab?.key || null : null}
         onToggleSidebar={toggleSidebar}
         commentsOpen={commentsOpen}
         onToggleComments={toggleComments}
@@ -506,9 +603,15 @@ export default function Board({
       ) : activeTab?.kind === 'doc' ? (
         docPanel
       ) : activeTab?.kind === 'image' ? (
-        <ImagePanel filePath={activeTab.path} title={activeTab.title} />
+        <ImagePanel filePath={activeTab.path} title={activeTab.title} reloadSignal={diskToken} />
       ) : activeTab?.kind === 'text' || activeTab?.kind === 'page' ? (
-        <TextPanel filePath={activeTab.path} isHtml={activeTab.kind === 'page'} onPreview={onOpenLink} />
+        <TextPanel
+          filePath={activeTab.path}
+          isHtml={activeTab.kind === 'page'}
+          onPreview={onOpenLink}
+          reloadSignal={diskToken}
+          onSaveStateChange={onSaveStateChange}
+        />
       ) : (
         <div className="text-muted-foreground flex flex-1 items-center justify-center px-6 text-center text-[13px]">
           Open a file from the sidebar, or search for one.
@@ -546,6 +649,41 @@ export default function Board({
         browserOpen={browserOpen}
         onBrowserOpenChange={onBrowserOpenChange}
       />
+
+      {/* Leaving an editor with unsaved work. Cancel is the default action —
+          the safe one — and closing the dialog any other way means Cancel too,
+          so a stray Escape can't discard anything. */}
+      <AlertDialog open={!!pendingLeave} onOpenChange={(open) => !open && setPendingLeave(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Save your changes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {activeTab?.title ? `“${activeTab.title}” has` : 'This file has'} unsaved changes. They’re kept as a
+              draft if you leave, but the file itself won’t be updated until you save.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {/* Not an AlertDialogAction: that closes the dialog on click, and
+                discarding has to be the deliberate choice rather than the one
+                a mis-aimed click lands on. */}
+            <button
+              type="button"
+              className={buttonVariants({ variant: 'outline' })}
+              onClick={() => resolveLeave('discard')}
+            >
+              Discard
+            </button>
+            <button
+              type="button"
+              className={buttonVariants()}
+              onClick={() => resolveLeave('save')}
+            >
+              Save
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!pendingAction} onOpenChange={(open) => !open && setPendingAction(null)}>
         <AlertDialogContent>

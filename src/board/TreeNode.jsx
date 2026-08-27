@@ -86,6 +86,11 @@ const KIND_GLYPHS = { story: FileText, doc: File, page: FileCode, text: FileCode
 // had its extension taken off, so there is nothing left in the text to read it
 // from.
 //
+// A story's extension is '.s.md', which as a tag would read 'S.MD' — a spelling
+// of the rule rather than the thing it means. The row says STORY instead: it is
+// what the extension is for, and it is the one distinction in this tree that the
+// filenames alone make hard to scan.
+//
 // `bg-foreground/10` rather than a named surface token because this sits on two
 // different row backgrounds — the default and the selected row's accent — and a
 // translucent tint of the text colour stays legible on both, in either theme.
@@ -154,6 +159,7 @@ export default function TreeNode({
   function onMenuAction(action) {
     if (action === 'add-folder') onAddNode({ addType: 'folder', parentId: node.id })
     if (action === 'add-file') onAddNode({ addType: 'file', parentId: node.id })
+    if (action === 'add-doc') onAddNode({ addType: 'doc', parentId: node.id })
     if (action === 'rename') startRename()
     if (action === 'duplicate') onDuplicateRequest({ nodeType: type, nodeId: node.id, name })
     if (action === 'delete') onDeleteRequest({ nodeType: type, nodeId: node.id, name })
@@ -264,7 +270,9 @@ export default function TreeNode({
           <span className="min-w-0 flex-1 overflow-hidden text-ellipsis">{name}</span>
           {/* Outside the truncating span, so a long name shortens and the type
               stays readable rather than the two competing for the same space. */}
-          {node.ext && <span className={TAG_CLASS}>{node.ext}</span>}
+          {(node.kind === 'story' || node.ext) && (
+            <span className={TAG_CLASS}>{node.kind === 'story' ? 'story' : node.ext}</span>
+          )}
           <span
             className={cn(ACTIONS_MASK, selected ? 'to-accent' : 'to-background')}
             onClick={(e) => e.stopPropagation()}
@@ -279,7 +287,8 @@ export default function TreeNode({
                 {isFolder && (
                   <>
                     <DropdownMenuItem onSelect={() => onMenuAction('add-folder')}>Add folder</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => onMenuAction('add-file')}>Add file</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onMenuAction('add-file')}>Add story</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => onMenuAction('add-doc')}>Add markdown</DropdownMenuItem>
                     <DropdownMenuSeparator />
                   </>
                 )}
@@ -310,7 +319,8 @@ export default function TreeNode({
           {isFolder && (
             <>
               <ContextMenuItem onSelect={() => onMenuAction('add-folder')}>Add folder</ContextMenuItem>
-              <ContextMenuItem onSelect={() => onMenuAction('add-file')}>Add file</ContextMenuItem>
+              <ContextMenuItem onSelect={() => onMenuAction('add-file')}>Add story</ContextMenuItem>
+              <ContextMenuItem onSelect={() => onMenuAction('add-doc')}>Add markdown</ContextMenuItem>
               <ContextMenuSeparator />
             </>
           )}

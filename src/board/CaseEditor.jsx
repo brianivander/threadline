@@ -1,15 +1,20 @@
 // Markdown editor for a case body — MDXEditor (Lexical) in WYSIWYG mode, so
 // formatting is easy to read and edit while the DATA stays markdown.
 //
+// Saving is MANUAL — Ctrl+S or the Save button. What's typed lives in
+// useManualSave until then, backed up to localStorage on a short debounce so a
+// crash can't take it (see drafts.js). The parent's `value` is therefore the
+// baseline this editor started from, not a live mirror of the text.
+//
 // MDXEditor's `markdown` prop behaves like a textarea's defaultValue: it seeds
 // the document and is then ignored. So:
 //
-//   - switching case -> `key={caseId}` remounts, seeding the new body cleanly
-//     (and dropping the previous case's undo history with it)
-//   - value changed mid-case -> pushed in through the imperative ref, but ONLY
-//     when it isn't our own save echoing back. setMarkdown() rebuilds the
-//     document and drops the selection, so replaying our own save would yank
-//     the caret out from under the typist.
+//   - switching case -> the `caseId` in the key remounts, seeding the new body
+//     cleanly (and dropping the previous case's undo history with it)
+//   - text replaced from outside (a recovered draft, a discard) -> the `seed`
+//     in the key remounts too. Nothing is pushed in imperatively any more:
+//     setMarkdown() rebuilds the document and drops the selection, and the only
+//     writes now are ones the user asked for, which a remount already covers.
 //
 // Comment highlights are painted on top of that document as Lexical MarkNodes
 // and stripped again on export, so they never reach the file — see
@@ -31,15 +36,24 @@ import {
 } from '@/components/ui/context-menu'
 import { anchorFromSelection, applyCommentMarks, setActiveMark, threadIdAtSelection } from '@/board/caseText'
 import { commentMarksPlugin } from '@/board/commentMarks'
+import { useImageAssets } from '@/board/useImageAssets'
+import { useManualSave } from '@/board/useManualSave'
+import { SaveNotices } from '@/panels/SaveBar'
 
-const DEBOUNCE_MS = 500
-
+// Trailing whitespace is not an edit. MDXEditor normalizes it on export, so
+// comparing raw strings would call a freshly-opened case dirty.
 const sameMarkdown = (a, b) =>
   (a || '').replace(/[ \t]+$/gm, '').trimEnd() === (b || '').replace(/[ \t]+$/gm, '').trimEnd()
 
 export default function CaseEditor({
   caseId,
   caseName,
+  // The story file this case body lives in, and its folder. A case has no file
+  // of its own, so an image pasted into one is stored against the story that
+  // holds it — see useImageAssets.js.
+  docPath,
+  docDir,
+  root,
   value,
   onChangeBody,
   threads = [],
@@ -47,10 +61,9 @@ export default function CaseEditor({
   onRequestComment,
   onActivateThread,
   onOpenThread,
+  onSaveStateChange,
 }) {
   const editorRef = useRef(null)
-  const lastValueRef = useRef(value || '')
-  const debounceRef = useRef(null)
   const [lexicalEditor, setLexicalEditor] = useState(null)
   // Resolved anchor positions from the last pass, reused as a starting guess
   // for the next one.
@@ -60,34 +73,24 @@ export default function CaseEditor({
   // the user meant may be gone.
   const pendingSelectionRef = useRef(null)
 
-  // External value change (e.g. a store round-trip) that we didn't originate.
+  const write = useCallback((body) => onChangeBody({ caseId, body }), [onChangeBody, caseId])
+
+  const images = useImageAssets({ docPath, docDir, root })
+
+  const { text, seed, dirty, error: saveError, recovered, edit, save, discard } = useManualSave({
+    scope: caseId ? `case:${caseId}` : null,
+    baseline: value || '',
+    ready: !!caseId,
+    onSave: write,
+    onSettled: images.settle,
+    isEqual: sameMarkdown,
+  })
+
+  // Board guards navigation on this — switching case tabs, switching stories
+  // and closing the file's tab all have to ask before losing an unsaved body.
   useEffect(() => {
-    if (sameMarkdown(value, lastValueRef.current)) return
-    lastValueRef.current = value || ''
-    editorRef.current?.setMarkdown(value || '')
-  }, [value])
-
-  // What a pending save is FOR. Held apart from the timer so the write can
-  // still go out after the timer is gone — which is what switching case tabs,
-  // switching stories, or closing the file's tab does.
-  const pendingRef = useRef(null)
-
-  const flush = useCallback(() => {
-    clearTimeout(debounceRef.current)
-    const pending = pendingRef.current
-    pendingRef.current = null
-    if (pending) onChangeBody(pending)
-  }, [onChangeBody])
-
-  const flushRef = useRef(flush)
-  useEffect(() => {
-    flushRef.current = flush
-  }, [flush])
-
-  // On the way out of a case, and on the way out entirely: a debounce that is
-  // merely cancelled loses whatever was typed in its last half-second, and
-  // closing a tab right after typing is exactly when that happens.
-  useEffect(() => () => flushRef.current(), [caseId])
+    onSaveStateChange?.({ dirty, save, discard })
+  }, [dirty, save, discard, onSaveStateChange])
 
   // Only the anchored, unresolved threads affect the highlights — rebuilding
   // on every reply or status flip would be churn for no visible change.
@@ -106,9 +109,10 @@ export default function CaseEditor({
     hintsRef.current = hints
     setActiveMark(lexicalEditor, activeThreadId)
     // `threads` is intentionally not a dependency: anchorSignature is the part
-    // of it that changes what gets drawn.
+    // of it that changes what gets drawn. `text` is — where a comment's quoted
+    // text now sits moves as the body is edited, saved or not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lexicalEditor, anchorSignature, value])
+  }, [lexicalEditor, anchorSignature, text])
 
   // Repainting every mark just to move the focus ring would be wasteful, so
   // the active tint is its own pass over the existing elements.
@@ -146,15 +150,7 @@ export default function CaseEditor({
     })
   }, [lexicalEditor, onOpenThread])
 
-  function onChange(markdown) {
-    if (markdown === lastValueRef.current) return
-    lastValueRef.current = markdown
-    // Wait for a pause in typing before saving, so fast typing doesn't fire a
-    // PUT + tree refetch per keystroke.
-    pendingRef.current = { caseId, body: markdown }
-    clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => flushRef.current(), DEBOUNCE_MS)
-  }
+  const onChange = edit
 
   // The context menu only ever holds "Comment", so it opens only when there's
   // something to comment on. A menu whose single item is greyed out tells the
@@ -241,14 +237,20 @@ export default function CaseEditor({
     >
       <ContextMenuTrigger asChild>
         <div className="flex min-h-0 flex-1 flex-col" onContextMenuCapture={captureSelection}>
+          {/* No Save button here: the story's single Save lives on the title
+              row and covers this body along with the params. A recovered draft
+              still needs explaining where it was recovered, though. */}
+          <SaveNotices recovered={recovered} error={saveError} problem={images.error} onDiscard={discard} onSave={save} />
           <MDXEditor
-            key={caseId}
+            // Seeded like a defaultValue, so text replaced from outside — a
+            // recovered draft, a discard — only lands via a remount.
+            key={`${caseId}:${seed}`}
             ref={editorRef}
-            markdown={value || ''}
+            markdown={text}
             onChange={onChange}
             contentEditableClassName="threadline-prose"
             className="flex min-h-0 flex-1 flex-col"
-            plugins={markdownPlugins([commentMarksPlugin({ onEditor: setLexicalEditor })])}
+            plugins={markdownPlugins([commentMarksPlugin({ onEditor: setLexicalEditor })], { images })}
           />
         </div>
       </ContextMenuTrigger>

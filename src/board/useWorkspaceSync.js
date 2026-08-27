@@ -8,7 +8,7 @@
 // success: the label may say "just now" while `ahead` still shows work
 // waiting, and the footer shows both.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const isElectron = typeof window !== 'undefined' && !!window.threadlineDesktop?.isElectron
 
@@ -56,7 +56,11 @@ function readLastSync(root) {
   }
 }
 
-export function useWorkspaceSync({ root }) {
+// `onPulled` fires when a sync brought work down from the remote — i.e. the
+// files on disk changed without this app touching them. Everything the board
+// shows is read off disk once and held in memory, so incoming work stays
+// invisible until something re-reads it; this is the signal to do that.
+export function useWorkspaceSync({ root, onPulled }) {
   const [status, setStatus] = useState(null)
   const [lastSync, setLastSync] = useState(() => (root ? readLastSync(root) : null))
   const [syncing, setSyncing] = useState(false)
@@ -70,6 +74,13 @@ export function useWorkspaceSync({ root }) {
   const [accounts, setAccounts] = useState([])
   const [pushUser, setPushUser] = useState(null)
   const [checkingAccounts, setCheckingAccounts] = useState(false)
+
+  // Held in a ref so a caller passing an inline function doesn't rebuild
+  // `sync` on every render — the footer's button identity would churn with it.
+  const onPulledRef = useRef(onPulled)
+  useEffect(() => {
+    onPulledRef.current = onPulled
+  }, [onPulled])
 
   const refresh = useCallback(async () => {
     if (!isElectron || !root) {
@@ -131,6 +142,11 @@ export function useWorkspaceSync({ root }) {
       else await refresh()
 
       if (result?.ok) {
+        // The pull moved HEAD, so the files behind everything on screen are
+        // not the ones it was drawn from. Re-read before the label below says
+        // "just now" — otherwise sync reports success over stale content.
+        if (result.pulled) await onPulledRef.current?.()
+
         // Stamped only on a clean run, so the label can never be newer than
         // the last sync that actually completed.
         const now = new Date().toISOString()

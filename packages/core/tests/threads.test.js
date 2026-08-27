@@ -58,7 +58,7 @@ test('createThread writes an anchored thread and returns an enriched row', async
     assert.equal(thread.comments.length, 1)
 
     // ...and it's really on disk, in the comments section, as readable prose.
-    const raw = await readFile(path.join(root, 'Login.md'), 'utf8')
+    const raw = await readFile(path.join(root, 'Login.s.md'), 'utf8')
     assert.match(raw, /<!-- comments -->/)
     assert.match(raw, /<!-- thread id=t_[0-9a-f]{12} case="Happy path" status=open/)
     assert.match(raw, /^> log in$/m)
@@ -77,7 +77,7 @@ test('a story-level thread has no anchor', async () => {
     assert.equal(thread.anchor, null)
     assert.equal(thread.case_name, '')
 
-    const raw = await readFile(path.join(root, 'Login.md'), 'utf8')
+    const raw = await readFile(path.join(root, 'Login.s.md'), 'utf8')
     assert.doesNotMatch(raw, /^>/m)
   })
 })
@@ -136,7 +136,7 @@ test('resolving appends a note as the final comment; reopening appends another',
     assert.equal(reopened.comments.length, 3)
     assert.equal(reopened.comments[2].body, '_Reopened._')
 
-    const raw = await readFile(path.join(root, 'Login.md'), 'utf8')
+    const raw = await readFile(path.join(root, 'Login.s.md'), 'utf8')
     assert.match(raw, /status=open/)
   })
 })
@@ -252,7 +252,7 @@ test('scanThreads collects every thread in the workspace, at any depth', async (
     assert.equal(all.length, 3)
     assert.deepEqual(
       all.map((t) => t.story_id).sort(),
-      ['Top.md', 'project1/feature1/Deep.md', 'project1/feature1/Deep.md'].sort(),
+      ['Top.s.md', 'project1/feature1/Deep.s.md', 'project1/feature1/Deep.s.md'].sort(),
     )
     assert.ok(all.every((t) => t.story_title))
     assert.equal(empty && (await listThreads(root, empty.id)).length, 0)
@@ -260,7 +260,7 @@ test('scanThreads collects every thread in the workspace, at any depth', async (
     // The two filters the panel drives: mentions of me, and status.
     const forIan = all.filter((t) => t.mentions.includes('ian@corp.test'))
     assert.equal(forIan.length, 1)
-    assert.equal(forIan[0].story_id, 'Top.md')
+    assert.equal(forIan[0].story_id, 'Top.s.md')
     assert.equal(all.filter((t) => t.status === 'resolved').length, 1)
     assert.equal(all.filter((t) => t.status === 'open').length, 2)
   })
@@ -285,7 +285,7 @@ test('duplicating or moving a story carries its threads', async () => {
     assert.deepEqual(copied[0].anchor, ANCHOR)
 
     const moved = await moveNode(root, 'file', story.id, folder.id)
-    assert.equal(moved.id, 'elsewhere/Login.md')
+    assert.equal(moved.id, 'elsewhere/Login.s.md')
     assert.equal((await listThreads(root, moved.id)).length, 1)
   })
 })

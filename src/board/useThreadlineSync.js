@@ -199,6 +199,17 @@ export function useThreadlineSync({
     [loadLevel],
   )
 
+  // Re-read every level currently on screen. Unlike reloadLevels, this takes no
+  // ids: it is for the case where the files changed underneath us and we have
+  // no idea which ones — a git pull bringing a teammate's work down. Levels
+  // that were never opened are left alone; they'll be fetched fresh when they
+  // are, so there is nothing stale to correct.
+  const reloadAll = useCallback(() => {
+    const keys = Object.keys(levelsRef.current)
+    if (!keys.includes(ROOT)) keys.push(ROOT)
+    return Promise.all(keys.map((key) => loadLevel(key, { force: true })))
+  }, [loadLevel])
+
   // Forget every cached level at or under `id` — the folder is gone.
   const forget = useCallback((id) => {
     const under = (key) => key === id || key.startsWith(`${id}/`)
@@ -510,12 +521,17 @@ export function useThreadlineSync({
         return thenCases(api('POST', '/reorder', { storyId: id, orderedIds }))
       },
 
+      // `nodeType` is 'folder', 'file' (a story) or 'doc' (a plain markdown
+      // file). The last two are both files; the kind rides along so the repo
+      // knows which extension to write.
       addNode({ nodeType, parentId }) {
         const endpoint = nodeType === 'folder' ? 'folders' : 'files'
         const body =
           nodeType === 'folder'
             ? { parent_id: parentId, name: 'Untitled folder' }
-            : { parent_id: parentId, title: 'Untitled file' }
+            : nodeType === 'doc'
+              ? { parent_id: parentId, title: 'Untitled', kind: 'doc' }
+              : { parent_id: parentId, title: 'Untitled file' }
         // Adding into a closed folder opens it, so the new node is visible.
         expandNode(parentId)
         return thenReload(api('POST', `/${endpoint}`, body), [parentId])
@@ -537,6 +553,7 @@ export function useThreadlineSync({
     expandNode,
     revealNode,
     reloadLevels,
+    reloadAll,
     query,
     setQuery,
     results,

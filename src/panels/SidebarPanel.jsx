@@ -308,7 +308,10 @@ export default function SidebarPanel({
           <ContextMenuItem onSelect={() => onAddNode({ addType: 'folder', parentId: null })}>
             Add folder
           </ContextMenuItem>
-          <ContextMenuItem onSelect={() => onAddNode({ addType: 'file', parentId: null })}>Add file</ContextMenuItem>
+          <ContextMenuItem onSelect={() => onAddNode({ addType: 'file', parentId: null })}>Add story</ContextMenuItem>
+          <ContextMenuItem onSelect={() => onAddNode({ addType: 'doc', parentId: null })}>
+            Add markdown
+          </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
 

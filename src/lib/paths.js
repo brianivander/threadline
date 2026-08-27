@@ -105,6 +105,10 @@ export function toRelativePath(value, storyAbsDir) {
 
 const MARKDOWN_EXT = /\.(md|markdown)$/i
 
+// The story extension (see repo.js). `.s.md` is one extension in two dots, so
+// it is matched as a whole — 'login.s.md' is a story titled 'login'.
+const STORY_EXT = /\.s\.md$/i
+
 // A resolved link the markdown editor should open rather than the browser: a
 // local file whose name ends in .md/.markdown. A *web* URL ending in .md is
 // deliberately left to the browser — the server decides what it serves there,
@@ -115,6 +119,25 @@ export function isLocalMarkdownUrl(value) {
   // A query or hash can trail even a local URL once it's been through the
   // address bar, and neither is part of the filename.
   return MARKDOWN_EXT.test(s.split(/[?#]/)[0])
+}
+
+// Is this path a story file? A path, a file: URL or a workspace id all answer
+// the same way — the name is the whole rule.
+export function isStoryPath(value) {
+  return STORY_EXT.test(String(value || '').trim().split(/[?#]/)[0])
+}
+
+// A file's display name: its filename with the extension taken off, matching
+// what the repo does for a tree row. Used for tabs opened by absolute path,
+// where there is no node to take a title from.
+export function titleOf(absPath) {
+  const base = toPosix(absPath).split('/').pop() || ''
+  // The compound story extension comes off whole — stripping the last dot
+  // alone would title 'login.s.md' as 'login.s'. A bare '.s.md' is a hidden
+  // file rather than a story with no name, so it keeps its whole name.
+  if (base.length > 5 && STORY_EXT.test(base)) return base.slice(0, -5)
+  const dot = base.lastIndexOf('.')
+  return dot > 0 ? base.slice(0, dot) : base
 }
 
 // The reverse of toFileUrl: a file:// URL back to a plain filesystem path,

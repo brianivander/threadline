@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 // Same glyph vocabulary as a tree row, so a tab reads as the file it is.
 const TAB_GLYPHS = { story: FileText, doc: File, page: FileCode, text: FileCode, image: ImageIcon }
 
-function EditorTab({ tab, active, onActivate, onClose }) {
+function EditorTab({ tab, active, dirty, onActivate, onClose }) {
   const Glyph = TAB_GLYPHS[tab.kind] || File
   return (
     <div
@@ -58,12 +58,27 @@ function EditorTab({ tab, active, onActivate, onClose }) {
       <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap" title={tab.title}>
         {tab.title}
       </span>
+      {/* Unsaved work, in the place every editor puts it. The close button
+          takes the same slot on hover, because a dot you can't click past is a
+          tab you can't shut. */}
+      {dirty && (
+        <span
+          aria-label="Unsaved changes"
+          title="Unsaved changes"
+          className="bg-foreground size-1.5 shrink-0 rounded-full group-hover/tab:hidden"
+        />
+      )}
       <Button
         variant="ghost"
         size="icon-xs"
         // Always visible on the active tab, on hover otherwise: a row of close
-        // buttons is noise, but a tab you can't see how to close is worse.
-        className={cn('shrink-0', active ? '' : 'opacity-0 group-hover/tab:opacity-100 focus:opacity-100')}
+        // buttons is noise, but a tab you can't see how to close is worse. A
+        // dirty tab hides its own close button until hover so the dot can show.
+        className={cn(
+          'shrink-0',
+          active && !dirty ? '' : 'opacity-0 group-hover/tab:opacity-100 focus:opacity-100',
+          dirty ? 'hidden group-hover/tab:inline-flex' : '',
+        )}
         aria-label={`Close ${tab.title}`}
         onClick={(e) => {
           e.stopPropagation()
@@ -79,6 +94,9 @@ function EditorTab({ tab, active, onActivate, onClose }) {
 export default function EditorBar({
   tabs = [],
   activeKey,
+  // The tab whose editor holds unsaved work, or null. Only ever one — a single
+  // body editor is mounted at a time (see Board).
+  dirtyKey = null,
   onActivateTab,
   onCloseTab,
   onToggleSidebar,
@@ -108,6 +126,7 @@ export default function EditorBar({
             key={tab.key}
             tab={tab}
             active={tab.key === activeKey}
+            dirty={tab.key === dirtyKey}
             onActivate={onActivateTab}
             onClose={onCloseTab}
           />

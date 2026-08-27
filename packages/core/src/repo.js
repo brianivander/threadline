@@ -9,9 +9,10 @@
 // Every file node carries a `kind` saying what it is — the tree is the app's
 // file explorer, not just its story list:
 //
-//   'story' — a `.md`/`.markdown` file carrying the `<!-- threadline-story -->`
-//             marker (see story-file.js): frontmatter + `<!-- case: Name -->`
-//             delimited cases + a comment section.
+//   'story' — a `.s.md` file: frontmatter + `<!-- case: Name -->` delimited
+//             cases + a comment section (see story-file.js). The extension is
+//             the whole rule — the contents are parsed, never consulted to
+//             decide what the file is.
 //   'doc'   — any other markdown file: a PRD, a TRD, a README that simply
 //             lives in the workspace. Read and written as plain text through
 //             the /doc route; this module only lists, renames, moves, copies
@@ -21,7 +22,7 @@
 //             the story it belongs to is part of the context this tree is for.
 //
 // A node's `title` is its filename with the extension taken off, for every kind
-// alike, and `ext` carries that extension separately ('md', 'html', 'png') so
+// alike, and `ext` carries that extension separately ('s.md', 'md', 'png') so
 // the UI can label the row without re-parsing the name. For a story the
 // filename IS the title, so this is the only honest reading; for the rest it
 // keeps `notes.md` and `notes.png` telling themselves apart through the label
@@ -40,7 +41,7 @@
 // workspace, which is what answers "every comment mentioning me").
 //
 // IDs are POSIX-style paths relative to the workspace root ('/' separators
-// regardless of OS), e.g. 'folder1/subfolder/login.md'. The workspace root
+// regardless of OS), e.g. 'folder1/subfolder/login.s.md'. The workspace root
 // itself is represented as '' / null.
 //
 // Every id is resolved with `resolveSafe` before touching the filesystem, so
@@ -49,7 +50,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { isStoryFile, parseStoryFile, serializeStoryFile } from './story-file.js'
+import { parseStoryFile, serializeStoryFile } from './story-file.js'
 import * as search from './search.js'
 
 export const CRITICALITIES = ['P1', 'P2', 'P3', 'P4']
@@ -59,10 +60,19 @@ export const CRITICALITIES = ['P1', 'P2', 'P3', 'P4']
 // next to a story is part of the context the tree is for, and hiding it makes
 // the tree lie about what's on disk.
 //
-// What differs by extension is what OPENING one does, which is the `kind`:
-// markdown may be a story or a plain document (only the file's own content
-// decides which — see readFile_); pages and images are known by extension
-// alone; everything else is 'other', listed but not openable here.
+// What differs by extension is what OPENING one does, which is the `kind`.
+// Every kind is decided by extension alone — nothing is read to classify it.
+//
+// A story is a `.s.md`. The compound extension is the whole rule: a story and
+// a PRD are both markdown and both live in the same folder, so the name is the
+// only place the difference can be visible in a file explorer, in a git diff,
+// or in the sidebar before anything has been opened. The alternative — reading
+// every markdown file in a folder to see whether it declares itself a story —
+// makes the tree's answer depend on file contents nobody can see from the row.
+//
+// `.s.md` still ends in `.md`, so every markdown tool (GitHub, an editor's
+// preview, a linter) keeps treating a story as the markdown it is.
+const STORY_EXTS = ['.s.md']
 const MARKDOWN_EXTS = ['.md', '.markdown']
 const PAGE_EXTS = ['.html', '.htm']
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif']
@@ -84,15 +94,17 @@ const TEXT_EXTS = [
 // The extensions this module knows how to open. NOT a filter on what the tree
 // shows — it's what `filenameFor` treats as a deliberate extension change on
 // rename, and what decides a markdown file is worth reading.
-export const FILE_EXTS = [...MARKDOWN_EXTS, ...PAGE_EXTS, ...IMAGE_EXTS, ...PDF_EXTS, ...TEXT_EXTS]
+export const FILE_EXTS = [...STORY_EXTS, ...MARKDOWN_EXTS, ...PAGE_EXTS, ...IMAGE_EXTS, ...PDF_EXTS, ...TEXT_EXTS]
 
 // What /text is allowed to read and write. HTML is in here because an .html
 // file is editable source as well as a page to look at — the app edits the
 // text and hands the browser the preview.
 export const TEXT_OPEN_EXTS = [...TEXT_EXTS, ...PAGE_EXTS]
 
-// The extension a new file gets when nothing says otherwise.
-const DEFAULT_EXT = '.md'
+// The extension a new file gets when nothing says otherwise. `createFile`
+// writes a story, and a rename that drops the extension is a story's rename
+// (its filename IS its title), so the default is the story one.
+const DEFAULT_EXT = STORY_EXTS[0]
 
 // ---- path helpers -----------------------------------------------------------
 
@@ -138,7 +150,9 @@ function sanitizeName(str) {
 }
 
 // The trailing '.ext' of a name EXACTLY as the file spells it, or '' when it
-// has none. Only the last dot counts, so 'spec v1.2.md' keeps '.md'.
+// has none. Only the last dot counts, so 'spec v1.2.md' keeps '.md' — except
+// for the compound story extension, which is one extension in two dots:
+// 'login.s.md' is a story titled 'login', not a file called 'login.s'.
 //
 // Case matters here and is preserved: path.basename(name, ext) strips `ext`
 // only on an exact match, so stripping a lowercased '.jpg' off 'photo.JPG'
@@ -147,6 +161,13 @@ function sanitizeName(str) {
 // reletter its extension.
 function rawExtOf(name) {
   const base = toPosix(name).split('/').pop() || ''
+  const lower = base.toLowerCase()
+  for (const ext of STORY_EXTS) {
+    // `>` and not `>=`: '.s.md' as a whole filename is a hidden file, not a
+    // story with no title at all.
+    const at = lower.length - ext.length
+    if (at > 0 && lower.endsWith(ext)) return base.slice(at)
+  }
   // A leading dot is a hidden name, not an extension: ".gitignore" is a file
   // called ".gitignore", and reporting "gitignore" as its type would put a
   // GITIGNORE tag on the row and leave a rename with nothing to reattach.
@@ -160,9 +181,9 @@ function extOf(name) {
   return rawExtOf(name).toLowerCase()
 }
 
-// The kind of a file this module never reads — decided by extension, because
-// either there is nothing inside to consult or opening it would be reckless.
-// Returns null only for markdown, whose kind depends on its contents.
+// What a file IS, decided by its name alone. Nothing is opened to answer this:
+// a story says so in its extension, and for everything else there is either
+// nothing inside to consult or opening it would be reckless.
 //
 // 'other' is the catch-all: a .zip, a .xlsx, a 900 MB video. It is listed in
 // the tree and described here, but never read — which is the whole point of
@@ -170,9 +191,10 @@ function extOf(name) {
 //
 // A file with no extension at all ('.gitignore', 'Dockerfile', 'LICENSE') is
 // text: those are written to be read, and there is no extension to consult.
-function unreadFileKind(name) {
+function fileKind(name) {
   const ext = extOf(name)
-  if (MARKDOWN_EXTS.includes(ext)) return null
+  if (STORY_EXTS.includes(ext)) return 'story'
+  if (MARKDOWN_EXTS.includes(ext)) return 'doc'
   if (PAGE_EXTS.includes(ext)) return 'page'
   if (IMAGE_EXTS.includes(ext)) return 'image'
   if (PDF_EXTS.includes(ext)) return 'pdf'
@@ -183,11 +205,13 @@ function unreadFileKind(name) {
 // A rename carries a title; this turns it back into a filename.
 //
 // One rule covers both kinds. A story is titled 'Login' and the extension is
-// invisible to the user, so it gets appended. A doc or a page is listed under
-// its real filename ('spec.md'), so a rename that already ends in a known
-// extension is taken verbatim — including a deliberate 'spec.md' -> 'spec.html'.
-// Anything else keeps the extension the file already had, which is the only
-// safe default: silently turning a `.html` into a `.md` would strand the file.
+// invisible to the user, so its own '.s.md' gets appended back — renaming a
+// story is no way to stop it being one. A doc or a page is listed under its
+// real filename ('spec.md'), so a rename that already ends in a known extension
+// is taken verbatim — including a deliberate 'spec.md' -> 'spec.html', and
+// 'spec.md' -> 'spec.s.md', which is how a document becomes a story. Anything
+// else keeps the extension the file already had, which is the only safe
+// default: silently turning a `.html` into a `.md` would strand the file.
 function filenameFor(title, currentExt) {
   const base = sanitizeName(title)
   return FILE_EXTS.includes(extOf(base)) ? base : `${base}${currentExt || DEFAULT_EXT}`
@@ -292,10 +316,10 @@ function listWorkspaceFiles(absDir) {
   return listFilesWithExt(absDir, null)
 }
 
-// Markdown only — the thread scan reads story files, and an HTML page has no
+// Stories only — the thread scan reads story files, and nothing else has a
 // comment section to find.
-function listMdFiles(absDir) {
-  return listFilesWithExt(absDir, MARKDOWN_EXTS)
+function listStoryFiles(absDir) {
+  return listFilesWithExt(absDir, STORY_EXTS)
 }
 
 // ---- folders ------------------------------------------------------------------
@@ -389,19 +413,18 @@ function plainFileNode(root, id, kind) {
 // only until the file's cases are next mutated — same lifetime assumption
 // the UI already makes between a tree fetch and the next single action).
 //
-// Only a story is parsed. A page or an image isn't opened at all, and a
-// markdown file that doesn't declare itself a story is described without being
-// interpreted: the story fields it would otherwise be given (a default 'P1'
-// criticality, an implicit "Case 1" holding its entire text) are fictions, and
-// the tree would then offer to edit a README as though it had cases.
+// Only a story is parsed. A page or an image isn't opened at all, and a plain
+// `.md` is described without being interpreted: the story fields it would
+// otherwise be given (a default 'P1' criticality, an implicit "Case 1" holding
+// its entire text) are fictions, and the tree would then offer to edit a README
+// as though it had cases.
 async function readFile_(root, id) {
   const abs = resolveSafe(root, id)
-  const unread = unreadFileKind(id)
-  if (unread) return (await pathExists(abs)) ? plainFileNode(root, id, unread) : null
+  const kind = fileKind(id)
+  if (kind !== 'story') return (await pathExists(abs)) ? plainFileNode(root, id, kind) : null
 
   const raw = await fs.readFile(abs, 'utf8').catch(() => null)
   if (raw === null) return null
-  if (!isStoryFile(raw)) return plainFileNode(root, id, 'doc')
 
   const { frontmatter, cases, threads } = parseStoryFile(raw)
   const { criticality, links, ...rest } = frontmatter
@@ -457,17 +480,25 @@ export async function getFile(root, id) {
   return file ? stripDetail(file) : null
 }
 
+// `kind` picks what gets created: a story (the default — a `.s.md` with
+// frontmatter and no cases yet) or a 'doc', a plain `.md` written empty. Both
+// are markdown on disk; only the extension and the initial content differ, and
+// everything downstream classifies the result by extension alone.
 export async function createFile(root, data) {
   const parentAbs = data?.parent_id ? resolveSafe(root, data.parent_id) : path.resolve(root)
   await fs.mkdir(parentAbs, { recursive: true })
-  const base = sanitizeName(data?.title || 'Untitled file')
-  const filename = await uniqueName(parentAbs, base, { ext: DEFAULT_EXT })
+  const doc = data?.kind === 'doc'
+  const base = sanitizeName(data?.title || (doc ? 'Untitled' : 'Untitled file'))
+  const ext = doc ? MARKDOWN_EXTS[0] : DEFAULT_EXT
+  const filename = await uniqueName(parentAbs, base, { ext })
   const id = joinId(data?.parent_id, filename)
-  await writeFile_(root, id, {
-    criticality: data?.criticality || 'P1',
-    links: data?.links || [],
-    cases: [],
-  })
+  if (doc) await fs.writeFile(resolveSafe(root, id), '', 'utf8')
+  else
+    await writeFile_(root, id, {
+      criticality: data?.criticality || 'P1',
+      links: data?.links || [],
+      cases: [],
+    })
   return getFile(root, id)
 }
 
@@ -776,9 +807,9 @@ const THREAD_LINE = '<!--[ \t]*thread[ \t]'
 
 export async function scanThreads(root) {
   const matches = await search.filesMatching(root, THREAD_LINE, {
-    globs: MARKDOWN_EXTS.map((ext) => `*${ext}`),
+    globs: STORY_EXTS.map((ext) => `*${ext}`),
   })
-  const ids = matches ?? (await allMarkdownFilesByWalk(root))
+  const ids = matches ?? (await allStoryFilesByWalk(root))
 
   const files = await mapLimit(ids, (id) => readFile_(root, id))
   const out = []
@@ -790,12 +821,12 @@ export async function scanThreads(root) {
 }
 
 // The pre-ripgrep behaviour, kept for a machine that won't run the bundled
-// binary. Reads every directory in the workspace to find the markdown in it.
-async function allMarkdownFilesByWalk(root) {
+// binary. Reads every directory in the workspace to find the stories in it.
+async function allStoryFilesByWalk(root) {
   const ids = []
   async function walk(parentId_) {
     const abs = parentId_ ? resolveSafe(root, parentId_) : path.resolve(root)
-    for (const name of await listMdFiles(abs)) ids.push(joinId(parentId_, name))
+    for (const name of await listStoryFiles(abs)) ids.push(joinId(parentId_, name))
     for (const dir of await listDirs(abs)) await walk(joinId(parentId_, dir))
   }
   await walk(null)

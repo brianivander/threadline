@@ -10,6 +10,8 @@ import {
   toRelativePath,
   resolveLocalLink,
   isLocalMarkdownUrl,
+  isStoryPath,
+  titleOf,
   fromFileUrl,
   workspacePathOf,
   workspaceIdOf,
@@ -94,6 +96,28 @@ test('isLocalMarkdownUrl matches local .md files only, never a web URL', () => {
   // A server decides what it serves at a .md path — that stays a web page.
   assert.equal(isLocalMarkdownUrl('https://example.com/README.md'), false)
   assert.equal(isLocalMarkdownUrl(''), false)
+})
+
+test('isStoryPath matches the story extension, in any of the forms a path arrives in', () => {
+  assert.equal(isStoryPath('folder/login.s.md'), true)
+  assert.equal(isStoryPath('C:\\repo\\Login.S.MD'), true)
+  assert.equal(isStoryPath('file:///C:/repo/login.s.md?v=2'), true)
+  assert.equal(isStoryPath('folder/prd.md'), false)
+  assert.equal(isStoryPath('folder/notes.s.markdown'), false)
+  assert.equal(isStoryPath(''), false)
+})
+
+test('titleOf takes the whole extension off, including the compound story one', () => {
+  assert.equal(titleOf('C:/repo/User can log in.s.md'), 'User can log in')
+  assert.equal(titleOf('C:\\repo\\PRD.md'), 'PRD')
+  assert.equal(titleOf('C:/repo/spec v1.2.md'), 'spec v1.2')
+  assert.equal(titleOf('C:/repo/Dockerfile'), 'Dockerfile')
+  // A dotfile's leading dot is a name, not an extension. A bare '.s.md' has no
+  // title in front of the story extension, so it isn't one — it falls back to
+  // the ordinary rule (the same answer the repo gives it).
+  assert.equal(titleOf('C:/repo/.gitignore'), '.gitignore')
+  assert.equal(titleOf('C:/repo/.s.md'), '.s')
+  assert.equal(titleOf(''), '')
 })
 
 test('fromFileUrl reverses toFileUrl, decoding escapes', () => {

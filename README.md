@@ -7,7 +7,8 @@ A visual board for organizing project context — stories, comments, and code th
 - **Board view** — drag-and-drop stories, code, and notes on an infinite canvas
 - **Threadline panel** — hierarchical thread view for structured context
 - **Comments** — inline comments with CodeMirror-powered rich text
-- **Workspace sync** — git-backed persistence, story files live in your repo
+- **Pasted images** — paste or drop a screenshot straight into an editor; it's written to `.threadline/img` in the repo that owns the document and linked relatively, so it travels with a clone and renders on GitHub too. Images a document no longer shows are removed when it's saved
+- **Workspace sync** — git-backed persistence, story files (`*.s.md`) live in your repo alongside your other markdown
 - **Electron shell** — embedded browser panels with real authenticated sessions (Figma, Google Docs, etc.)
 
 ## Tech Stack

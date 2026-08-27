@@ -6,6 +6,19 @@
 export { parseStoryFile, serializeStoryFile, THREAD_STATUSES } from './story-file.js'
 
 export {
+  IMAGE_DIR,
+  IMAGE_TYPES,
+  MAX_IMAGE_BYTES,
+  assetFileName,
+  deleteImage,
+  imageDirFor,
+  isManagedImagePath,
+  isReferencedElsewhere,
+  repoRootFor,
+  saveImage,
+} from './assets.js'
+
+export {
   CRITICALITIES,
   FILE_EXTS,
   TEXT_OPEN_EXTS,

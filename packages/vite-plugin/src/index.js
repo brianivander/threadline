@@ -29,6 +29,7 @@
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import * as assets from '@threadline/core/assets'
 import * as repo from '@threadline/core/repo'
 import * as users from './user-registry.js'
 
@@ -38,16 +39,10 @@ const MARKDOWN_FILE = /\.(md|markdown)$/i
 // log nobody wants in an editor.
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 
-// What /raw is willing to serve, and the Content-Type it serves it as.
-const IMAGE_TYPES = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.avif': 'image/avif',
-}
+// What /raw is willing to serve, and the Content-Type it serves it as. Shared
+// with the writing side (assets.js) so that what can be pasted in and what can
+// be shown back can't drift apart.
+const IMAGE_TYPES = assets.IMAGE_TYPES
 
 export default function threadlineVitePlugin(options = {}) {
   const explicitDbPath = options.dbPath || null
@@ -97,10 +92,39 @@ export default function threadlineVitePlugin(options = {}) {
     const base = '/api/threadline'
     if (!url.pathname.startsWith(base)) return null
 
-    const root = resolveRoot(req)
     const parts = url.pathname.slice(base.length).split('/').filter(Boolean)
     const q = url.searchParams
     const method = req.method
+
+    // ---- raw (a file's bytes, for an image shown in a tab or inline in a
+    // document) ----
+    // Addressed by absolute path like /doc, for the same reason: an image may
+    // be linked from a story and live outside the workspace entirely.
+    //
+    // This exists because the renderer is served over http, so an <img> cannot
+    // load a file:// URL — Electron blocks it, and rightly. Images only: this
+    // is not a general "read any file off the disk" endpoint.
+    //
+    // Answered BEFORE the workspace root is resolved, and this is the one route
+    // that has to be. Every other route is reached by fetch(), which sets the
+    // x-threadline-root header; this one is reached by the browser loading an
+    // <img src>, which cannot set a header at all. The route has no use for the
+    // root anyway — the path it serves is absolute.
+    if (parts[0] === 'raw' && method === 'GET') {
+      const file = q.get('path')
+      if (!file) throw new Error('raw requires a path')
+      const type = IMAGE_TYPES[path.extname(file).toLowerCase()]
+      if (!type) throw new Error('raw serves images only')
+      const bytes = await fs.readFile(file)
+      res.statusCode = 200
+      res.setHeader('Content-Type', type)
+      // The path IS the identity and the bytes change when the file does, so
+      // this must not be cached across an edit.
+      res.setHeader('Cache-Control', 'no-store')
+      return res.end(bytes)
+    }
+
+    const root = resolveRoot(req)
 
     // ---- tree (one level per request) ----
     // `parent_id` absent means the workspace root. The client asks for a
@@ -286,25 +310,32 @@ export default function threadlineVitePlugin(options = {}) {
       return json(res, 200, { data: { path: file, text: await fs.readFile(file, 'utf8') } })
     }
 
-    // ---- raw (a file's bytes, for an image shown in a tab) ----
-    // Addressed by absolute path like /doc, for the same reason: an image may
-    // be linked from a story and live outside the workspace entirely.
+    // ---- asset (an image pasted into a markdown editor) ----
+    // Write: the bytes arrive base64-encoded in JSON rather than as multipart,
+    // because the only caller is the editor's paste handler, which already has
+    // the image as a File in memory and no form to submit.
     //
-    // This exists because the renderer is served over http, so an <img> cannot
-    // load a file:// URL — Electron blocks it, and rightly. Images only: this
-    // is not a general "read any file off the disk" endpoint.
-    if (parts[0] === 'raw' && method === 'GET') {
+    // `doc_path` is what decides WHERE the image lands: images belong to the
+    // repository that owns the document, which for a document opened through a
+    // story link is not necessarily this workspace. See @threadline/core's
+    // assets.js — every rule about placement and deletion lives there, so the
+    // desktop shell and the dev server can't disagree about them.
+    if (parts[0] === 'asset' && method === 'POST') {
+      const body = await readBody(req)
+      const data = Buffer.from(String(body.dataBase64 || ''), 'base64')
+      const file = await assets.saveImage(root, { docPath: body.docPath, name: body.name, data })
+      return json(res, 201, { data: { path: file } })
+    }
+    // Delete: the tidy-up after an image is removed from a document and the
+    // document saved. Guarded in core — managed directory only, image
+    // extensions only, and never a file something else still links to — and
+    // reports which of those it did rather than failing, because "there was
+    // nothing to delete" is the normal outcome of saving twice.
+    if (parts[0] === 'asset' && method === 'DELETE') {
       const file = q.get('path')
-      if (!file) throw new Error('raw requires a path')
-      const type = IMAGE_TYPES[path.extname(file).toLowerCase()]
-      if (!type) throw new Error('raw serves images only')
-      const bytes = await fs.readFile(file)
-      res.statusCode = 200
-      res.setHeader('Content-Type', type)
-      // The path IS the identity and the bytes change when the file does, so
-      // this must not be cached across an edit.
-      res.setHeader('Cache-Control', 'no-store')
-      return res.end(bytes)
+      if (!file) throw new Error('asset delete requires a path')
+      const deleted = await assets.deleteImage(root, file, { docPath: q.get('doc_path') || null })
+      return json(res, 200, { ok: true, deleted })
     }
 
     // ---- users (the `@` mention typeahead) ----
@@ -352,6 +383,10 @@ export default function threadlineVitePlugin(options = {}) {
     if (/^EACCES|^EPERM/.test(message)) return 403
     if (/^only the thread author/i.test(message)) return 403
     if (/requires|non-empty/i.test(message)) return 400
+    // A file the API won't store or serve — a paste of something that isn't an
+    // image, or one too big to put in a repo. The editor shows the message, so
+    // it must not arrive as a 500 and must not be logged as a fault of ours.
+    if (/(images only|is empty|too large)/i.test(message)) return 400
     if (/escapes workspace root/i.test(message)) return 400
     return 500
   }

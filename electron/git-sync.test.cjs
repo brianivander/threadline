@@ -162,6 +162,23 @@ test('syncWorkspace pulls a teammate’s work down', async () => {
   assert.equal(result.ok, true, `sync failed: ${result.reason} ${result.detail || ''}`)
   assert.equal(result.committed, 0, 'nothing of mine to commit')
   assert.ok(fs.existsSync(path.join(mine, 'their-story.md')), 'their file should have arrived')
+  assert.equal(result.pulled, true, 'the board has to be told the files changed underneath it')
+})
+
+// `pulled` is what makes the board re-read the workspace, so it has to mean
+// "the remote moved" and nothing else. A local commit also moves HEAD, and
+// reporting that as a pull would re-read the disk on every sync — including the
+// one whose only change is the text the user is still typing.
+test('syncWorkspace reports pulled=false when only local work went up', async () => {
+  const { clones } = makeRepos(1)
+  const work = clones[0]
+
+  fs.writeFileSync(path.join(work, 'mine.md'), 'mine\n')
+
+  const result = await syncWorkspace(work)
+  assert.equal(result.ok, true, `sync failed: ${result.reason} ${result.detail || ''}`)
+  assert.equal(result.committed, 1)
+  assert.equal(result.pulled, false, 'a local commit is not incoming work')
 })
 
 // The guarantee that actually matters for the footer: an unreachable or

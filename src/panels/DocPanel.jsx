@@ -23,46 +23,49 @@ import { RotateCw } from 'lucide-react'
 import { MDXEditor } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
 
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { markdownPlugins } from '@/board/mdxPlugins'
+import { useImageAssets } from '@/board/useImageAssets'
+import { useManualSave } from '@/board/useManualSave'
+import { toPosix } from '@/lib/paths'
+import { SaveButton, SaveNotices } from '@/panels/SaveBar'
 
 const API = '/api/threadline'
-const DEBOUNCE_MS = 500
 
 export default function DocPanel({
   filePath,
   root,
+  // Changes when the file may have been rewritten underneath us — a sync that
+  // pulled. Read exactly like the Reload button's own key below, because it
+  // asks for the same thing: this file, from disk, again.
+  reloadSignal = 0,
+  // Reports dirtiness up to Board, which guards a tab switch on it.
+  onSaveStateChange,
 }) {
   // 'loading' until the first read settles, so an empty file doesn't flash an
   // error and a slow disk doesn't show an empty editor the user might type in
   // before the real contents land on top.
   const [state, setState] = useState({ status: 'loading', markdown: '', error: '' })
-  const [seed, setSeed] = useState(0)
-  const [saveError, setSaveError] = useState('')
   // Bumped by Reload. Read as an effect dependency rather than calling the
   // loader directly, so a re-read always cancels the one before it instead of
   // racing it — two clicks would otherwise let the older response land last.
   const [reloadKey, setReloadKey] = useState(0)
 
-  const debounceRef = useRef(null)
-  // What a pending save is FOR — the path and the text. Held separately from
-  // the timer so the write can still be completed after the timer is torn
-  // down, which is what closing a tab or switching files does.
-  const pendingRef = useRef(null)
-  // The text the editor last emitted, so a change event carrying nothing new
-  // doesn't queue a redundant write.
-  const lastTextRef = useRef('')
   // Whether the user has actually touched this document. MDXEditor normalizes
   // markdown on export (bullet markers, emphasis characters, table padding),
   // so seeding it can emit an onChange whose text differs from the file
-  // without anyone having edited anything. Saving that would rewrite a file —
-  // one that may live in a different repo — into a git diff nobody asked for
-  // merely by opening it. Any real edit needs a key, a paste or a click inside
-  // the editor first, so that is what arms the save.
+  // without anyone having edited anything. Treating that as an edit would mark
+  // a file dirty — one that may live in a different repo — merely because it
+  // was opened. Any real edit needs a key, a paste or a click inside the editor
+  // first, so that is what arms it.
   const touchedRef = useRef(false)
 
   const fileName = String(filePath || '').split('/').pop()
+  // Pasted images are stored relative to the document's own folder, and the
+  // document here is addressed by absolute path — which may well be outside
+  // this workspace. See useImageAssets.js: the file lands in the repo that
+  // owns the document, not necessarily in the workspace.
+  const docDir = toPosix(filePath || '').split('/').slice(0, -1).join('/')
 
   const request = useCallback(
     async (method, path, body) => {
@@ -79,22 +82,30 @@ export default function DocPanel({
     [root],
   )
 
+  const write = useCallback(
+    (markdown) => request('PUT', '/doc', { path: filePath, markdown }),
+    [request, filePath],
+  )
+
+  const images = useImageAssets({ docPath: filePath, docDir, root })
+
+  const { text, seed, dirty, saving, error: saveError, recovered, edit, save, discard } = useManualSave({
+    scope: filePath,
+    baseline: state.markdown,
+    ready: state.status === 'ready',
+    onSave: write,
+    onSettled: images.settle,
+  })
+
   useEffect(() => {
     if (!filePath) return undefined
     let cancelled = false
-    // A pending save belongs to the file we're LEAVING. It has to go out
-    // against that file's own path before this one loads — dropping it would
-    // silently discard whatever was typed in the last half-second.
-    flushRef.current()
     touchedRef.current = false
     setState({ status: 'loading', markdown: '', error: '' })
-    setSaveError('')
     request('GET', `/doc?path=${encodeURIComponent(filePath)}`)
       .then(({ data }) => {
         if (cancelled) return
-        lastTextRef.current = data.markdown || ''
         setState({ status: 'ready', markdown: data.markdown || '', error: '' })
-        setSeed((n) => n + 1)
       })
       .catch((err) => {
         if (cancelled) return
@@ -103,42 +114,18 @@ export default function DocPanel({
     return () => {
       cancelled = true
     }
-  }, [filePath, request, reloadKey])
+  }, [filePath, request, reloadKey, reloadSignal])
 
-  // Finish any pending write. Kept in a ref because the loader effect above
-  // has to call it without taking a dependency on it, and unmount has to call
-  // the version that closes over the file being left.
-  const flush = useCallback(() => {
-    clearTimeout(debounceRef.current)
-    const pending = pendingRef.current
-    pendingRef.current = null
-    if (!pending) return
-    request('PUT', '/doc', { path: pending.path, markdown: pending.markdown })
-      .then(() => setSaveError(''))
-      .catch((err) => setSaveError(String(err.message || err)))
-  }, [request])
-
-  const flushRef = useRef(flush)
+  // Board guards navigation on this, and needs the actions for its dialog.
   useEffect(() => {
-    flushRef.current = flush
-  }, [flush])
-
-  // Closing the tab must not lose the last keystrokes either.
-  useEffect(() => () => flushRef.current(), [])
+    onSaveStateChange?.({ dirty, save, discard })
+  }, [dirty, save, discard, onSaveStateChange])
 
   function onChange(markdown) {
-    const unchanged = markdown === lastTextRef.current
-    // Recorded either way, so the next change is compared against what the
-    // editor last emitted rather than a stale baseline.
-    lastTextRef.current = markdown
-    if (unchanged || !touchedRef.current) return
-    // Wait for a pause in typing, so fast typing doesn't write the file once
-    // per keystroke — same debounce the case editor uses.
-    // A failed save must never be silent: the text is only in the editor at
-    // this point. flush() reports it.
-    pendingRef.current = { path: filePath, markdown }
-    clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => flushRef.current(), DEBOUNCE_MS)
+    // See touchedRef above: MDXEditor emits a normalized document on seeding,
+    // which is not an edit and must not mark the file dirty.
+    if (!touchedRef.current) return
+    edit(markdown)
   }
 
   return (
@@ -171,19 +158,22 @@ export default function DocPanel({
             variant="ghost"
             size="icon-sm"
             aria-label="Reload from disk"
-            title="Reload from disk"
-            onClick={() => setReloadKey((k) => k + 1)}
+            // Re-reading throws away unsaved work, so say so rather than
+            // letting the icon look like a harmless refresh.
+            title={dirty ? 'Reload from disk — discards your unsaved changes' : 'Reload from disk'}
+            onClick={() => {
+              if (dirty && !window.confirm('Reload from disk? Your unsaved changes will be lost.')) return
+              discard()
+              setReloadKey((k) => k + 1)
+            }}
           >
             <RotateCw />
           </Button>
+          <SaveButton dirty={dirty} saving={saving} onSave={save} />
         </div>
       </div>
 
-      {saveError && (
-        <div className="bg-destructive/10 text-destructive shrink-0 border-y px-4 py-1.5 text-xs">
-          Couldn’t save: {saveError}
-        </div>
-      )}
+      <SaveNotices recovered={recovered} error={saveError} problem={images.error} onDiscard={discard} onSave={save} />
 
       {state.status === 'loading' && (
         <div className="text-muted-foreground px-4 py-3 text-sm">Loading…</div>
@@ -198,12 +188,14 @@ export default function DocPanel({
 
       {state.status === 'ready' && (
         <MDXEditor
+          // Seeded like a defaultValue, so replacing the text from outside — a
+          // recovered draft, a discard — only lands via a remount.
           key={`${filePath}:${seed}`}
-          markdown={state.markdown}
+          markdown={text}
           onChange={onChange}
           contentEditableClassName="threadline-prose"
           className="flex min-h-0 flex-1 flex-col"
-          plugins={markdownPlugins()}
+          plugins={markdownPlugins([], { images })}
         />
       )}
     </div>

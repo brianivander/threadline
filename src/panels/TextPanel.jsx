@@ -13,74 +13,70 @@
 // Addressed by absolute path, like DocPanel — a file can be linked from a story
 // and live outside the workspace, in which case it has no id.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Eye, RotateCw } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { useManualSave } from '@/board/useManualSave'
+import { SaveButton, SaveNotices } from '@/panels/SaveBar'
 
-// Long enough that a pause reads as "done typing", short enough that closing a
-// tab straight after a keystroke doesn't feel like a gamble. Matches the case
-// editor and DocPanel.
-const DEBOUNCE_MS = 500
-
-export default function TextPanel({ filePath, isHtml = false, onPreview }) {
-  const [text, setText] = useState('')
+// `reloadSignal` changes when the file may have been rewritten underneath us —
+// a sync that pulled — and means the same thing as the Reload button.
+//
+// `onSaveStateChange` reports dirtiness up to Board, which needs it to guard a
+// tab switch and to mark the tab.
+export default function TextPanel({ filePath, isHtml = false, onPreview, reloadSignal = 0, onSaveStateChange }) {
+  // What's on disk, as last read. useManualSave holds what's in the editor.
+  const [disk, setDisk] = useState('')
   const [loadError, setLoadError] = useState('')
-  const [saveError, setSaveError] = useState('')
   const [loading, setLoading] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [ready, setReady] = useState(false)
 
-  const debounceRef = useRef(null)
-  // What a pending save is FOR. Switching files has to flush the old file's
-  // text to the old file's path, never to the new one.
-  const pendingRef = useRef(null)
-
-  const write = useCallback(async (path, value) => {
-    try {
+  const write = useCallback(
+    async (value) => {
       const res = await fetch('/api/threadline/text', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, text: value }),
+        body: JSON.stringify({ path: filePath, text: value }),
       })
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}))
         throw new Error(payload.error || `Save failed: ${res.status}`)
       }
-      setSaveError('')
-    } catch (err) {
-      // A failed save must never be silent: the text is only in the editor.
-      setSaveError(err.message)
-    }
-  }, [])
+    },
+    [filePath],
+  )
 
-  // Finish a save that was still waiting. Called when the file changes and on
-  // unmount, so closing a tab can't discard the last keystrokes.
-  const flush = useCallback(() => {
-    clearTimeout(debounceRef.current)
-    const pending = pendingRef.current
-    pendingRef.current = null
-    if (pending) write(pending.path, pending.text)
-  }, [write])
+  const { text, dirty, saving, error: saveError, recovered, edit, save, discard } = useManualSave({
+    scope: filePath,
+    baseline: disk,
+    ready,
+    onSave: write,
+  })
 
   useEffect(() => {
     if (!filePath) {
-      setText('')
+      setDisk('')
+      setReady(false)
       return undefined
     }
     let cancelled = false
     setLoading(true)
+    setReady(false)
     setLoadError('')
-    setSaveError('')
     fetch(`/api/threadline/text?path=${encodeURIComponent(filePath)}`)
       .then(async (res) => {
         const payload = await res.json().catch(() => ({}))
         if (!res.ok) throw new Error(payload.error || `Couldn’t open this file: ${res.status}`)
-        if (!cancelled) setText(payload.data?.text ?? '')
+        if (cancelled) return
+        setDisk(payload.data?.text ?? '')
+        setReady(true)
       })
       .catch((err) => {
         if (!cancelled) {
           setLoadError(err.message)
-          setText('')
+          setDisk('')
         }
       })
       .finally(() => {
@@ -89,17 +85,13 @@ export default function TextPanel({ filePath, isHtml = false, onPreview }) {
     return () => {
       cancelled = true
     }
-  }, [filePath, reloadKey])
+  }, [filePath, reloadKey, reloadSignal])
 
-  // Flush on the way out of a file, and on the way out entirely.
-  useEffect(() => () => flush(), [filePath, flush])
-
-  function onInput(value) {
-    setText(value)
-    pendingRef.current = { path: filePath, text: value }
-    clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(flush, DEBOUNCE_MS)
-  }
+  // Board guards navigation on this, and needs the actions to offer save and
+  // discard from its own dialog.
+  useEffect(() => {
+    onSaveStateChange?.({ dirty, save, discard })
+  }, [dirty, save, discard, onSaveStateChange])
 
   if (!filePath) return null
 
@@ -126,22 +118,21 @@ export default function TextPanel({ filePath, isHtml = false, onPreview }) {
           variant="ghost"
           size="icon-sm"
           aria-label="Reload from disk"
-          title="Reload from disk"
-          // Discards nothing unsaved: the pending write goes out first.
+          // Re-reading throws away unsaved work, so say so rather than letting
+          // the icon look like a harmless refresh.
+          title={dirty ? 'Reload from disk — discards your unsaved changes' : 'Reload from disk'}
           onClick={() => {
-            flush()
+            if (dirty && !window.confirm('Reload from disk? Your unsaved changes will be lost.')) return
+            discard()
             setReloadKey((k) => k + 1)
           }}
         >
           <RotateCw />
         </Button>
+        <SaveButton dirty={dirty} saving={saving} onSave={save} />
       </div>
 
-      {saveError && (
-        <div className="bg-destructive/10 text-destructive shrink-0 border-y px-4 py-1.5 text-xs">
-          Couldn’t save: {saveError}
-        </div>
-      )}
+      <SaveNotices recovered={recovered} error={saveError} onDiscard={discard} onSave={save} />
 
       {loadError ? (
         <p className="text-muted-foreground px-4 py-3 text-[13px] italic">{loadError}</p>
@@ -162,11 +153,11 @@ export default function TextPanel({ filePath, isHtml = false, onPreview }) {
             const el = e.target
             const { selectionStart: from, selectionEnd: to } = el
             const next = `${text.slice(0, from)}  ${text.slice(to)}`
-            onInput(next)
+            edit(next)
             // Put the caret after the inserted spaces once React has painted.
             requestAnimationFrame(() => el.setSelectionRange(from + 2, from + 2))
           }}
-          onChange={(e) => onInput(e.target.value)}
+          onChange={(e) => edit(e.target.value)}
           placeholder={loading ? 'Opening…' : ''}
         />
       )}
