@@ -1,5 +1,5 @@
 // Comment thread tests — thread CRUD against real story files on disk, the
-// workspace-wide scan, and the guarantee that editing a case body (what the
+// workspace-wide scan, and the guarantee that editing a tab body (what the
 // story panel autosaves on a debounce) never drops comments.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   createFolder, createFile, updateFile,
-  createCase, updateCase, deleteCase, reorderCases, listCases,
+  createTab, updateTab, deleteTab, reorderTabs, listTabs,
   listThreads, createThread, addReply, setThreadStatus, deleteThread, scanThreads,
   extractMentions, buildTree, getFile, duplicateNode, moveNode,
 } from '../src/repo.js'
@@ -36,7 +36,7 @@ test('extractMentions finds each mentioned address once, lowercased', () => {
 test('createThread writes an anchored thread and returns an enriched row', async () => {
   await withWorkspace(async (root) => {
     const story = await createFile(root, { title: 'Login' })
-    await createCase(root, { story_id: story.id, name: 'Happy path', body: 'Steps: log in.' })
+    await createTab(root, { story_id: story.id, name: 'Happy path', body: 'Steps: log in.' })
 
     const thread = await createThread(root, {
       story_id: story.id,
@@ -173,7 +173,7 @@ test('only the thread author can delete it', async () => {
 test('editing a case body preserves the comments section', async () => {
   await withWorkspace(async (root) => {
     const story = await createFile(root, { title: 'Login' })
-    const c = await createCase(root, { story_id: story.id, name: 'Happy path', body: 'Steps: log in.' })
+    const c = await createTab(root, { story_id: story.id, name: 'Happy path', body: 'Steps: log in.' })
     const created = await createThread(root, {
       story_id: story.id,
       case_name: 'Happy path',
@@ -183,7 +183,7 @@ test('editing a case body preserves the comments section', async () => {
     })
 
     // This is what the story panel's debounced autosave does.
-    await updateCase(root, c.id, { body: 'Steps: log in. Then log out.' })
+    await updateTab(root, c.id, { body: 'Steps: log in. Then log out.' })
 
     const threads = await listThreads(root, story.id)
     assert.equal(threads.length, 1, 'thread survived a case-body save')
@@ -195,22 +195,22 @@ test('editing a case body preserves the comments section', async () => {
 test('other file mutations preserve the comments section too', async () => {
   await withWorkspace(async (root) => {
     const story = await createFile(root, { title: 'Login' })
-    await createCase(root, { story_id: story.id, name: 'A', body: 'a' })
-    const second = await createCase(root, { story_id: story.id, name: 'B', body: 'b' })
+    await createTab(root, { story_id: story.id, name: 'A', body: 'a' })
+    const second = await createTab(root, { story_id: story.id, name: 'B', body: 'b' })
     await createThread(root, { story_id: story.id, author: 'jane@corp.test', body: 'q' })
 
     await updateFile(root, story.id, { criticality: 'P4' })
     assert.equal((await listThreads(root, story.id)).length, 1, 'survived a metadata change')
 
-    await createCase(root, { story_id: story.id, name: 'C', body: 'c' })
-    assert.equal((await listThreads(root, story.id)).length, 1, 'survived adding a case')
+    await createTab(root, { story_id: story.id, name: 'C', body: 'c' })
+    assert.equal((await listThreads(root, story.id)).length, 1, 'survived adding a tab')
 
-    const cases = await listCases(root, story.id)
-    await reorderCases(root, story.id, [cases[2].id, cases[0].id, cases[1].id])
-    assert.equal((await listThreads(root, story.id)).length, 1, 'survived a case reorder')
+    const tabs = await listTabs(root, story.id)
+    await reorderTabs(root, story.id, [tabs[2].id, tabs[0].id, tabs[1].id])
+    assert.equal((await listThreads(root, story.id)).length, 1, 'survived a tab reorder')
 
-    await deleteCase(root, second.id)
-    assert.equal((await listThreads(root, story.id)).length, 1, 'survived deleting a case')
+    await deleteTab(root, second.id)
+    assert.equal((await listThreads(root, story.id)).length, 1, 'survived deleting a tab')
 
     // A title change renames the file; threads move with it, under the new id.
     const renamed = await updateFile(root, story.id, { title: 'Sign in' })
@@ -224,7 +224,7 @@ test('other file mutations preserve the comments section too', async () => {
 test('threads are absent from file and tree payloads', async () => {
   await withWorkspace(async (root) => {
     const story = await createFile(root, { title: 'Login' })
-    await createCase(root, { story_id: story.id, name: 'A', body: 'a' })
+    await createTab(root, { story_id: story.id, name: 'A', body: 'a' })
     await createThread(root, { story_id: story.id, author: 'jane@corp.test', body: 'q' })
 
     assert.equal('threads' in (await getFile(root, story.id)), false)

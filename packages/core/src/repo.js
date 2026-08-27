@@ -453,18 +453,18 @@ async function writeFile_(root, id, file) {
   }
   const content = serializeStoryFile({
     frontmatter,
-    cases: (file.cases || []).map((c) => ({ name: c.name, body: c.body || '' })),
+    tabs: (file.tabs || []).map((t) => ({ name: t.name, body: t.body || '' })),
     threads: file.threads || [],
   })
   await fs.writeFile(abs, content, 'utf8')
 }
 
-// Tree/list payloads carry metadata only. Neither `cases` nor `threads` travel
-// with a file: cases are fetched per open story through listCases, threads
+// Tree/list payloads carry metadata only. Neither `tabs` nor `threads` travel
+// with a file: tabs are fetched per open story through listTabs, threads
 // through listThreads/scanThreads. A workspace with many stories or a busy
 // comment history doesn't bloat every tree fetch.
 function stripDetail(file) {
-  const { cases, threads, ...meta } = file
+  const { tabs, threads, ...meta } = file
   return meta
 }
 
@@ -553,68 +553,68 @@ export async function deleteFile(root, id) {
 
 // ---- cases --------------------------------------------------------------------
 
-function parseCaseId(id) {
+function parseTabId(id) {
   const idx = id.lastIndexOf('::')
-  if (idx === -1) throw new Error(`Malformed case id: ${id}`)
+  if (idx === -1) throw new Error(`Malformed tab id: ${id}`)
   return { storyId: id.slice(0, idx), index: Number(id.slice(idx + 2)) }
 }
 
-function nextCaseName(existingNames, count) {
+function nextTabName(existingNames, count) {
   let n = count + 1
-  while (existingNames.has(`Case ${n}`)) n += 1
-  return `Case ${n}`
+  while (existingNames.has(`Tab ${n}`)) n += 1
+  return `Tab ${n}`
 }
 
-export async function listCases(root, storyId) {
+export async function listTabs(root, storyId) {
   if (!storyId) return []
   const file = await readFile_(root, storyId)
-  return file ? file.cases : []
+  return file ? file.tabs : []
 }
 
-export async function getCase(root, id) {
-  const { storyId, index } = parseCaseId(id)
+export async function getTab(root, id) {
+  const { storyId, index } = parseTabId(id)
   const file = await readFile_(root, storyId)
-  return file?.cases?.[index] || null
+  return file?.tabs?.[index] || null
 }
 
-export async function createCase(root, data) {
-  if (!data?.story_id) throw new Error('createCase requires story_id')
+export async function createTab(root, data) {
+  if (!data?.story_id) throw new Error('createTab requires story_id')
   const file = await readFile_(root, data.story_id)
   if (!file) throw new Error(`File not found: ${data.story_id}`)
-  const existingNames = new Set(file.cases.map((c) => c.name).filter(Boolean))
-  const name = data.name || nextCaseName(existingNames, file.cases.length)
-  const cases = [...file.cases, { name, body: data.body || '' }]
-  await writeFile_(root, data.story_id, { ...file, cases })
-  const index = cases.length - 1
+  const existingNames = new Set(file.tabs.map((t) => t.name).filter(Boolean))
+  const name = data.name || nextTabName(existingNames, file.tabs.length)
+  const tabs = [...file.tabs, { name, body: data.body || '' }]
+  await writeFile_(root, data.story_id, { ...file, tabs })
+  const index = tabs.length - 1
   return { id: `${toPosix(data.story_id)}::${index}`, story_id: toPosix(data.story_id), name, body: data.body || '' }
 }
 
-export async function updateCase(root, id, data) {
-  const { storyId, index } = parseCaseId(id)
+export async function updateTab(root, id, data) {
+  const { storyId, index } = parseTabId(id)
   const file = await readFile_(root, storyId)
-  if (!file || !file.cases[index]) return null
-  const cases = file.cases.map((c, i) => (i === index ? { ...c, ...data } : c))
-  await writeFile_(root, storyId, { ...file, cases })
-  return { id, story_id: toPosix(storyId), name: cases[index].name, body: cases[index].body }
+  if (!file || !file.tabs[index]) return null
+  const tabs = file.tabs.map((t, i) => (i === index ? { ...t, ...data } : t))
+  await writeFile_(root, storyId, { ...file, tabs })
+  return { id, story_id: toPosix(storyId), name: tabs[index].name, body: tabs[index].body }
 }
 
-export async function deleteCase(root, id) {
-  const { storyId, index } = parseCaseId(id)
+export async function deleteTab(root, id) {
+  const { storyId, index } = parseTabId(id)
   const file = await readFile_(root, storyId)
   if (!file) return
-  const cases = file.cases.filter((_, i) => i !== index)
-  await writeFile_(root, storyId, { ...file, cases })
+  const tabs = file.tabs.filter((_, i) => i !== index)
+  await writeFile_(root, storyId, { ...file, tabs })
 }
 
-// Rewrite a file's cases into `orderedIds` order (case tab drag & drop — the
+// Rewrite a file's tabs into `orderedIds` order (tab drag & drop — the
 // only reordering this repo supports; folders/files are always listed
 // alphabetically).
-export async function reorderCases(root, storyId, orderedIds) {
+export async function reorderTabs(root, storyId, orderedIds) {
   const file = await readFile_(root, storyId)
   if (!file) return
-  const byId = new Map(file.cases.map((c) => [c.id, c]))
-  const cases = orderedIds.map((id) => byId.get(id)).filter(Boolean)
-  await writeFile_(root, storyId, { ...file, cases })
+  const byId = new Map(file.tabs.map((t) => [t.id, t]))
+  const tabs = orderedIds.map((id) => byId.get(id)).filter(Boolean)
+  await writeFile_(root, storyId, { ...file, tabs })
 }
 
 // ---- comment threads ----------------------------------------------------------

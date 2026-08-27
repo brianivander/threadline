@@ -1,4 +1,4 @@
-// Repo tests — CRUD over a generic, arbitrary-depth folder/file tree, case
+// Repo tests — CRUD over a generic, arbitrary-depth folder/file tree, tab
 // handling within a file, tree building, moving nodes, and duplication.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -9,8 +9,8 @@ import { CRITICALITIES } from '../src/index.js'
 import {
   listFolders, getFolder, createFolder, updateFolder, deleteFolder,
   listFiles, getFile, createFile, updateFile, deleteFile,
-  listCases, getCase, createCase, updateCase, deleteCase,
-  buildTree, moveNode, duplicateNode, reorderCases,
+  listTabs, getTab, createTab, updateTab, deleteTab,
+  buildTree, moveNode, duplicateNode, reorderTabs,
 } from '../src/repo.js'
 
 async function withWorkspace(fn) {
@@ -130,39 +130,39 @@ test('cases: parsed from `<!-- case: -->` sections, auto "Case N" naming, update
     const b = await createFolder(root, { parent_id: a.id, name: 'Auth' })
     const s = await createFile(root, { parent_id: b.id, title: 'Login' })
 
-    assert.deepEqual(await listCases(root, s.id), [], 'a fresh file has no cases')
+    assert.deepEqual(await listTabs(root, s.id), [], 'a fresh file has no cases')
 
-    const c1 = await createCase(root, { story_id: s.id, body: 'Happy path' })
-    const c2 = await createCase(root, { story_id: s.id, body: 'Edge case' })
+    const c1 = await createTab(root, { story_id: s.id, body: 'Happy path' })
+    const c2 = await createTab(root, { story_id: s.id, body: 'Edge case' })
     assert.equal(c1.name, 'Case 1', 'auto-name is stored at creation')
     assert.equal(c2.name, 'Case 2')
 
-    const updated = await updateCase(root, c1.id, { body: 'Happy path (revised)' })
+    const updated = await updateTab(root, c1.id, { body: 'Happy path (revised)' })
     assert.equal(updated.body, 'Happy path (revised)')
-    assert.equal((await getCase(root, c1.id)).body, 'Happy path (revised)')
+    assert.equal((await getTab(root, c1.id)).body, 'Happy path (revised)')
 
     // Deleting c1 must not let a later create reuse "Case 1"'s number if it
     // collides with a still-existing name.
-    await deleteCase(root, c1.id)
-    const remaining = await listCases(root, s.id)
+    await deleteTab(root, c1.id)
+    const remaining = await listTabs(root, s.id)
     assert.equal(remaining.length, 1)
     assert.equal(remaining[0].name, 'Case 2')
 
-    const c3 = await createCase(root, { story_id: s.id, body: 'Third' })
+    const c3 = await createTab(root, { story_id: s.id, body: 'Third' })
     assert.equal(c3.name, 'Case 3', 'next auto-name skips the still-existing Case 2')
   })
 })
 
-test('reorderCases rewrites the file so case sections appear in the new order', async () => {
+test('reorderTabs rewrites the file so case sections appear in the new order', async () => {
   await withWorkspace(async (root) => {
     const a = await createFolder(root, { name: 'App' })
     const b = await createFolder(root, { parent_id: a.id, name: 'Auth' })
     const s = await createFile(root, { parent_id: b.id, title: 'Login' })
-    const c1 = await createCase(root, { story_id: s.id, name: 'First', body: 'a' })
-    const c2 = await createCase(root, { story_id: s.id, name: 'Second', body: 'b' })
+    const c1 = await createTab(root, { story_id: s.id, name: 'First', body: 'a' })
+    const c2 = await createTab(root, { story_id: s.id, name: 'Second', body: 'b' })
 
-    await reorderCases(root, s.id, [c2.id, c1.id])
-    const cases = await listCases(root, s.id)
+    await reorderTabs(root, s.id, [c2.id, c1.id])
+    const cases = await listTabs(root, s.id)
     assert.deepEqual(cases.map((c) => c.name), ['Second', 'First'])
   })
 })
@@ -175,7 +175,7 @@ test('buildTree: arbitrary depth, folders first then files (each alphabetical), 
     const deep = await createFolder(root, { parent_id: auth.id, name: 'Deep' })
     await createFile(root, { parent_id: deep.id, title: 'Zeta' })
     const s1 = await createFile(root, { parent_id: auth.id, title: 'Login' })
-    await createCase(root, { story_id: s1.id, body: 'case one' })
+    await createTab(root, { story_id: s1.id, body: 'case one' })
     // A file that sorts before "Auth" alphabetically must still render AFTER
     // it, since folders always come before files within the same parent.
     await createFile(root, { parent_id: myApp.id, title: 'AAA readme' })
@@ -233,13 +233,13 @@ test('duplicateNode: file copy preserves content, folder copy is recursive', asy
       links: [{ url: 'https://a.test', tag: 'Design', color: 'purple' }],
       criticality: 'P2',
     })
-    await createCase(root, { story_id: s.id, name: 'Happy path', body: 'Step 1' })
+    await createTab(root, { story_id: s.id, name: 'Happy path', body: 'Step 1' })
 
     const fileCopy = await duplicateNode(root, 'file', s.id)
     assert.equal(fileCopy.id, 'App/Auth/Login (copy).s.md')
     assert.equal(fileCopy.criticality, 'P2')
     assert.deepEqual(fileCopy.links, [{ url: 'https://a.test', tag: 'Design', color: 'purple' }])
-    assert.deepEqual((await listCases(root, fileCopy.id)).map((c) => c.name), ['Happy path'], 'cases copied too')
+    assert.deepEqual((await listTabs(root, fileCopy.id)).map((c) => c.name), ['Happy path'], 'cases copied too')
 
     const nested = await createFolder(root, { parent_id: b.id, name: 'Nested' })
     await createFile(root, { parent_id: nested.id, title: 'Inner' })
@@ -266,7 +266,7 @@ test('files on disk are readable markdown with YAML frontmatter', async () => {
       links: [{ url: 'https://a.test', tag: 'Design', color: 'purple' }],
       criticality: 'P2',
     })
-    await createCase(root, { story_id: s.id, name: 'Happy path', body: 'Step 1' })
+    await createTab(root, { story_id: s.id, name: 'Happy path', body: 'Step 1' })
 
     const raw = await readFile(path.join(root, 'App', 'Auth', 'Login.s.md'), 'utf8')
     assert.match(raw, /^---/)
@@ -304,7 +304,7 @@ test('a `.s.md` is a story and any other markdown is a doc — the name is the w
     assert.equal((await getFile(root, 'Marked.md')).kind, 'doc')
     await writeFile(path.join(root, 'Bare.s.md'), '', 'utf8')
     assert.equal((await getFile(root, 'Bare.s.md')).kind, 'story')
-    assert.deepEqual(await listCases(root, 'Bare.s.md'), [])
+    assert.deepEqual(await listTabs(root, 'Bare.s.md'), [])
   })
 })
 
@@ -401,7 +401,7 @@ test('renaming, moving and duplicating a file keep its extension', async () => {
 test('buildTree reports a kind for every file and carries no cases', async () => {
   await withWorkspace(async (root) => {
     await createFile(root, { title: 'Login' })
-    await createCase(root, { story_id: 'Login.s.md', name: 'Happy', body: 'ok' })
+    await createTab(root, { story_id: 'Login.s.md', name: 'Happy', body: 'ok' })
     await writeFile(path.join(root, 'PRD.md'), '# PRD\n', 'utf8')
     await writeFile(path.join(root, 'mock.html'), '<h1>Mock</h1>', 'utf8')
 
@@ -412,7 +412,7 @@ test('buildTree reports a kind for every file and carries no cases', async () =>
     )
     assert.ok(tree.every((n) => n.cases === undefined), 'no node carries cases')
     // The story's case is still there — it's just fetched on its own.
-    assert.equal((await listCases(root, 'Login.s.md')).length, 1)
+    assert.equal((await listTabs(root, 'Login.s.md')).length, 1)
   })
 })
 

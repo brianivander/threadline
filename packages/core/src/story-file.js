@@ -16,10 +16,10 @@
 //
 //   <!-- threadline-story -->
 //
-//   <!-- case: Happy path -->
+//   <!-- tab: Happy path -->
 //   Preconditions: ...
 //
-//   <!-- case: Wrong password -->
+//   <!-- tab: Wrong password -->
 //   ...
 //
 // Frontmatter is a hand-rolled YAML subset (scalars + block lists whose items
@@ -29,19 +29,19 @@
 // keys are preserved on write so a story file can carry extra hand-added
 // fields without this code understanding them.
 //
-// Cases are delimited by `<!-- case: Name -->` marker lines (the tabs shown in
+// Tabs are delimited by `<!-- tab: Name -->` marker lines (the tabs shown in
 // the story panel). An HTML comment is used rather than a markdown heading so
-// authors are free to use `#`/`##` headings inside a case body, and so the
+// authors are free to use `#`/`##` headings inside a tab body, and so the
 // marker stays invisible when the file is rendered anywhere else. A file with
-// no marker at all is treated as a single case named "Case 1". Markers inside
-// fenced code blocks (```) are not treated as case boundaries.
+// no marker at all is treated as a single tab named "Tab 1". Markers inside
+// fenced code blocks (```) are not treated as tab boundaries.
 //
-// A `<!-- comments -->` marker ends the case region and opens the comment
+// A `<!-- comments -->` marker ends the tab region and opens the comment
 // threads section, which runs to the end of the file:
 //
 //   <!-- comments -->
 //
-//   <!-- thread id=t_k3f9a2 case="Happy path" status=open quote="log in" ... -->
+//   <!-- thread id=t_k3f9a2 tab="Happy path" status=open quote="log in" ... -->
 //   > log in
 //
 //   - **jane@corp.test** · 2026-08-24T08:17:04Z
@@ -54,7 +54,7 @@
 // on and what was said without parsing anything. The machine fields live in
 // the one-line `<!-- thread ... -->` marker, invisible when rendered. Thread
 // anchors are text-quote selectors (quote + surrounding context), not
-// character offsets, so an edit elsewhere in the case doesn't shift them.
+// character offsets, so an edit elsewhere in the tab doesn't shift them.
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 
@@ -72,9 +72,9 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 export const STORY_MARKER = '<!-- threadline-story -->'
 const STORY_MARKER_RE = /^[ \t]*<!--[ \t]*threadline-story[ \t]*-->[ \t]*$/i
 
-// `<!-- case: Name -->` on a line of its own. Case-insensitive on the keyword
-// so a hand-typed `<!-- Case: ... -->` still registers.
-const CASE_MARKER_RE = /^[ \t]*<!--[ \t]*case:[ \t]*(.+?)[ \t]*-->[ \t]*$/i
+// `<!-- tab: Name -->` on a line of its own. Case-insensitive on the keyword
+// so a hand-typed `<!-- Tab: ... -->` still registers.
+const TAB_MARKER_RE = /^[ \t]*<!--[ \t]*(tab|case):[ \t]*(.+?)[ \t]*-->[ \t]*$/i
 
 // `<!-- comments -->` on a line of its own — ends the case region.
 const COMMENTS_MARKER_RE = /^[ \t]*<!--[ \t]*comments[ \t]*-->[ \t]*$/i
@@ -211,34 +211,34 @@ function trimBlankLines(text) {
   return text.replace(/^(?:[ \t]*\r?\n)+/, '').replace(/(?:\r?\n[ \t]*)+$/, '')
 }
 
-// Split a story body into cases at `<!-- case: Name -->` markers, skipping any
+// Split a story body into tabs at `<!-- tab: Name -->` markers, skipping any
 // found inside fenced (```) code blocks.
-function splitCases(body) {
+function splitTabs(body) {
   const lines = body.split(/\r?\n/)
   const headings = []
   let inFence = false
   lines.forEach((line, idx) => {
     if (/^\s*```/.test(line)) { inFence = !inFence; return }
     if (inFence) return
-    const m = line.match(CASE_MARKER_RE)
-    if (m) headings.push({ line: idx, name: m[1].trim() })
+    const m = line.match(TAB_MARKER_RE)
+    if (m) headings.push({ line: idx, name: m[2].trim() })
   })
 
   if (!headings.length) {
     const trimmed = trimBlankLines(body)
-    // No markers at all: a brand-new story has zero cases (nothing to
+    // No markers at all: a brand-new story has zero tabs (nothing to
     // show as a tab yet); a plain-text body with no tab structure is read as
-    // one implicit case, so pre-existing free-form notes aren't discarded.
-    return { preamble: '', cases: body.trim() ? [{ name: 'Case 1', body: trimmed }] : [] }
+    // one implicit tab, so pre-existing free-form notes aren't discarded.
+    return { preamble: '', tabs: body.trim() ? [{ name: 'Tab 1', body: trimmed }] : [] }
   }
 
   const preamble = lines.slice(0, headings[0].line).join('\n').trim()
-  const cases = headings.map((h, i) => {
+  const tabs = headings.map((h, i) => {
     const start = h.line + 1
     const end = i + 1 < headings.length ? headings[i + 1].line : lines.length
     return { name: h.name, body: trimBlankLines(lines.slice(start, end).join('\n')) }
   })
-  return { preamble, cases }
+  return { preamble, tabs }
 }
 
 
@@ -284,7 +284,7 @@ function serializeAttrs(pairs) {
 }
 
 // Find the `<!-- comments -->` line (ignoring any inside a fenced block) and
-// cut the body there. No marker -> everything is case region, no threads.
+// cut the body there. No marker -> everything is tab region, no threads.
 function splitCommentSection(body) {
   const lines = body.split(/\r?\n/)
   let inFence = false
@@ -292,10 +292,10 @@ function splitCommentSection(body) {
     if (/^\s*```/.test(lines[i])) { inFence = !inFence; continue }
     if (inFence) continue
     if (COMMENTS_MARKER_RE.test(lines[i])) {
-      return { caseRegion: lines.slice(0, i).join('\n'), commentRegion: lines.slice(i + 1).join('\n') }
+      return { tabRegion: lines.slice(0, i).join('\n'), commentRegion: lines.slice(i + 1).join('\n') }
     }
   }
-  return { caseRegion: body, commentRegion: '' }
+  return { tabRegion: body, commentRegion: '' }
 }
 
 // The `> quoted text` blockquote and the comment prose are a human/AI-readable
@@ -321,7 +321,7 @@ function parseThreads(region) {
       const a = parseAttrs(markerMatch[1])
       thread = {
         id: a.id || '',
-        caseName: a.case || '',
+        tabName: a.tab || a.case || '',
         status: a.status === 'resolved' ? 'resolved' : 'open',
         anchor: a.quote
           ? {
@@ -359,7 +359,7 @@ function serializeThreads(threads) {
     if (!t?.id) continue
     const marker = serializeAttrs([
       ['id', t.id],
-      ['case', t.caseName || ''],
+      ['tab', t.tabName || ''],
       ['status', t.status === 'resolved' ? 'resolved' : 'open'],
       ['quote', t.anchor?.quote || ''],
       ['prefix', t.anchor?.prefix || ''],
@@ -395,12 +395,12 @@ function serializeThreads(threads) {
 //
 // The `<!-- threadline-story -->` marker is the rule. The two fallbacks below
 // exist for files written before the marker did — every story this app has
-// ever saved carries either an explicit case/comments marker or a
+// ever saved carries either an explicit tab/comments marker or a
 // `criticality` frontmatter key, and both are structure no plain document
 // would have.
 //
-// Deliberately NOT a signal: having a body at all. splitCases() reads a
-// marker-less body as one implicit "Case 1", so "it parsed into a case" is
+// Deliberately NOT a signal: having a body at all. splitTabs() reads a
+// marker-less body as one implicit "Tab 1", so "it parsed into a tab" is
 // true of literally every markdown file and says nothing.
 export function isStoryFile(raw) {
   const text = String(raw || '')
@@ -415,15 +415,15 @@ export function isStoryFile(raw) {
       continue
     }
     if (inFence) continue
-    if (STORY_MARKER_RE.test(line) || CASE_MARKER_RE.test(line) || COMMENTS_MARKER_RE.test(line)) return true
+    if (STORY_MARKER_RE.test(line) || TAB_MARKER_RE.test(line) || COMMENTS_MARKER_RE.test(line)) return true
   }
   return frontmatter.criticality !== undefined
 }
 
-// Take the marker line back out of the body before it is split into cases —
-// left in, a story with no case markers would parse it as the text of its
-// implicit "Case 1" and show `<!-- threadline-story -->` as the case body.
-// Only the first one, and only ahead of any case/comments marker: past that
+// Take the marker line back out of the body before it is split into tabs —
+// left in, a story with no tab markers would parse it as the text of its
+// implicit "Tab 1" and show `<!-- threadline-story -->` as the tab body.
+// Only the first one, and only ahead of any tab/comments marker: past that
 // point it is content (a document about this format, quoting it).
 function stripStoryMarker(body) {
   const lines = body.split(/\r?\n/)
@@ -434,7 +434,7 @@ function stripStoryMarker(body) {
       continue
     }
     if (inFence) continue
-    if (CASE_MARKER_RE.test(lines[i]) || COMMENTS_MARKER_RE.test(lines[i])) return body
+    if (TAB_MARKER_RE.test(lines[i]) || COMMENTS_MARKER_RE.test(lines[i])) return body
     if (STORY_MARKER_RE.test(lines[i])) {
       lines.splice(i, 1)
       return lines.join('\n')
@@ -443,27 +443,27 @@ function stripStoryMarker(body) {
   return body
 }
 
-// raw (string) → { frontmatter: {criticality, links, ...unknown}, preamble, cases: [{name, body}] }
+// raw (string) → { frontmatter: {criticality, links, ...unknown}, preamble, tabs: [{name, body}] }
 export function parseStoryFile(raw) {
   const text = raw || ''
   const fmMatch = text.match(FRONTMATTER_RE)
   const frontmatter = fmMatch ? parseYamlSubset(fmMatch[1]) : {}
   const body = stripStoryMarker(fmMatch ? text.slice(fmMatch[0].length) : text)
-  const { caseRegion, commentRegion } = splitCommentSection(body)
-  const { preamble, cases } = splitCases(caseRegion)
+  const { tabRegion, commentRegion } = splitCommentSection(body)
+  const { preamble, tabs } = splitTabs(tabRegion)
   if (!Array.isArray(frontmatter.links)) {
     frontmatter.links = frontmatter.links ? [frontmatter.links] : []
   }
-  return { frontmatter, preamble, cases, threads: parseThreads(commentRegion) }
+  return { frontmatter, preamble, tabs, threads: parseThreads(commentRegion) }
 }
 
-// { frontmatter, preamble, cases, threads } → raw file text
-export function serializeStoryFile({ frontmatter = {}, preamble = '', cases = [], threads = [] }) {
+// { frontmatter, preamble, tabs, threads } → raw file text
+export function serializeStoryFile({ frontmatter = {}, preamble = '', tabs = [], threads = [] }) {
   const fm = serializeYaml(frontmatter)
   const parts = []
   if (preamble.trim()) parts.push(preamble.trim())
-  for (const c of cases) {
-    parts.push(trimBlankLines(`<!-- case: ${c.name} -->\n\n${c.body || ''}`))
+  for (const t of tabs) {
+    parts.push(trimBlankLines(`<!-- tab: ${t.name} -->\n\n${t.body || ''}`))
   }
   const threadText = serializeThreads(threads)
   if (threadText) parts.push(`<!-- comments -->\n\n${threadText}`)

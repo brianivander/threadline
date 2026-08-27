@@ -31,7 +31,7 @@
 //
 // Renaming a file (or editing a story title — the filename IS the title)
 // changes its id, so the caller's selection would point at a path that no
-// longer exists. `onFileIdChange(oldId, newId)` fires for exactly those cases.
+// longer exists. `onFileIdChange(oldId, newId)` fires for exactly those tabs.
 // Renaming or moving a FOLDER re-paths everything beneath it, which invalidates
 // cached levels and remembered expansions wholesale — see repath().
 
@@ -99,9 +99,9 @@ export function useThreadlineSync({
   const [expanded, setExpanded] = useState(() => new Set())
   // Levels with a request in flight, so a row can show that it is opening.
   const [loading, setLoading] = useState(() => new Set())
-  // The open story's cases. They don't travel with the tree (see repo.js's
+  // The open story's tabs. They don't travel with the tree (see repo.js's
   // listChildren): only the selected story's are ever read.
-  const [cases, setCases] = useState([])
+  const [tabs, setTabs] = useState([])
   // The sidebar's filename search. A collapsed tree hides everything the user
   // hasn't opened, so this is the way to reach a file by name.
   const [query, setQuery] = useState('')
@@ -249,7 +249,7 @@ export function useThreadlineSync({
     levelsRef.current = {}
     inFlight.current.clear()
     setLevels({})
-    setCases([])
+    setTabs([])
 
     const remembered = loadExpanded(root)
     expandedRef.current = remembered
@@ -362,26 +362,26 @@ export function useThreadlineSync({
     setQuery('')
   }, [root])
 
-  // ---- cases ----------------------------------------------------------------
+  // ---- tabs -----------------------------------------------------------------
 
-  const fetchCases = useCallback(async () => {
+  const fetchTabs = useCallback(async () => {
     if (!root || !storyId) {
-      setCases([])
+      setTabs([])
       return
     }
     try {
-      const { data } = await api('GET', `/cases?story_id=${encodeURIComponent(storyId)}`)
-      setCases(data || [])
+      const { data } = await api('GET', `/tabs?story_id=${encodeURIComponent(storyId)}`)
+      setTabs(data || [])
     } catch {
-      setCases([])
+      setTabs([])
     }
   }, [api, root, storyId])
 
   // Re-fetch whenever the selection moves to another story — including the
-  // rename case, where the id itself changes under the same story.
+  // rename case, where the id itself changes under the same tab.
   useEffect(() => {
-    fetchCases()
-  }, [fetchCases])
+    fetchTabs()
+  }, [fetchTabs])
 
   // ---- lookups --------------------------------------------------------------
 
@@ -412,13 +412,13 @@ export function useThreadlineSync({
       }
     }
 
-    // A case mutation changes nothing the tree displays — cases are not part
-    // of its payload — so re-reading the open story's cases IS the whole
+    // A tab mutation changes nothing the tree displays — tabs are not part
+    // of its payload — so re-reading the open story's tabs IS the whole
     // update. Refreshing a level here would be work for nothing.
-    const thenCases = async (promise) => {
+    const thenTabs = async (promise) => {
       try {
         await promise
-        await fetchCases()
+        await fetchTabs()
         onChange && onChange()
       } catch {
         /* noop */
@@ -440,32 +440,32 @@ export function useThreadlineSync({
         }
       },
 
-      updateCase({ caseId, body }) {
-        return thenCases(api('PUT', `/cases/${seg(caseId)}`, { body }))
+      updateTab({ tabId, body }) {
+        return thenTabs(api('PUT', `/tabs/${seg(tabId)}`, { body }))
       },
 
-      // Empty name — the tab shows "Case N" until the user renames it.
-      addCase({ storyId: id }) {
-        return thenCases(api('POST', '/cases', { story_id: id, name: '', body: '' }))
+      // Empty name — the tab shows "Tab N" until the user renames it.
+      addTab({ storyId: id }) {
+        return thenTabs(api('POST', '/tabs', { story_id: id, name: '', body: '' }))
       },
 
-      renameCase({ caseId, name }) {
-        return thenCases(api('PUT', `/cases/${seg(caseId)}`, { name }))
+      renameTab({ tabId, name }) {
+        return thenTabs(api('PUT', `/tabs/${seg(tabId)}`, { name }))
       },
 
-      deleteCase({ caseId }) {
-        return thenCases(api('DELETE', `/cases/${seg(caseId)}`))
+      deleteTab({ tabId }) {
+        return thenTabs(api('DELETE', `/tabs/${seg(tabId)}`))
       },
 
-      async duplicateCase({ caseId }) {
+      async duplicateTab({ tabId }) {
         try {
-          const { data: c } = await api('GET', `/cases/${seg(caseId)}`)
-          await api('POST', '/cases', {
-            story_id: c.story_id,
-            name: c.name ? `${c.name} (copy)` : '',
-            body: c.body,
+          const { data: t } = await api('GET', `/tabs/${seg(tabId)}`)
+          await api('POST', '/tabs', {
+            story_id: t.story_id,
+            name: t.name ? `${t.name} (copy)` : '',
+            body: t.body,
           })
-          await fetchCases()
+          await fetchTabs()
           onChange && onChange()
         } catch {
           /* noop */
@@ -517,8 +517,8 @@ export function useThreadlineSync({
         }
       },
 
-      reorderCase({ storyId: id, orderedIds }) {
-        return thenCases(api('POST', '/reorder', { storyId: id, orderedIds }))
+      reorderTab({ storyId: id, orderedIds }) {
+        return thenTabs(api('POST', '/reorder', { storyId: id, orderedIds }))
       },
 
       // `nodeType` is 'folder', 'file' (a story) or 'doc' (a plain markdown
@@ -541,7 +541,7 @@ export function useThreadlineSync({
         return thenReload(api('POST', '/duplicate', { nodeType, id: nodeId }), [parentOf(nodeId)])
       },
     }
-  }, [api, reloadLevels, fetchCases, forget, repath, expandNode, onChange, onFileIdChange])
+  }, [api, reloadLevels, fetchTabs, forget, repath, expandNode, onChange, onFileIdChange])
 
   return {
     rootNodes: levels[ROOT] || [],
@@ -558,9 +558,9 @@ export function useThreadlineSync({
     setQuery,
     results,
     searching,
-    cases,
-    setCases,
-    refetchCases: fetchCases,
+    tabs,
+    setTabs,
+    refetchTabs: fetchTabs,
     actions,
   }
 }

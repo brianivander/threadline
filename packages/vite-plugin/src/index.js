@@ -186,25 +186,25 @@ export default function threadlineVitePlugin(options = {}) {
       return json(res, 200, { ok: true })
     }
 
-    // ---- cases ----
-    if (parts[0] === 'cases' && method === 'GET' && !parts[1]) {
-      return json(res, 200, { data: await repo.listCases(root, q.get('story_id') || null) })
+    // ---- tabs ----
+    if (parts[0] === 'tabs' && method === 'GET' && !parts[1]) {
+      return json(res, 200, { data: await repo.listTabs(root, q.get('story_id') || null) })
     }
-    if (parts[0] === 'cases' && method === 'POST') {
-      const created = await repo.createCase(root, await readBody(req))
+    if (parts[0] === 'tabs' && method === 'POST') {
+      const created = await repo.createTab(root, await readBody(req))
       return json(res, 201, { data: created })
     }
-    if (parts[0] === 'cases' && parts[1] && method === 'GET') {
-      const found = await repo.getCase(root, getId(parts, 1))
+    if (parts[0] === 'tabs' && parts[1] && method === 'GET') {
+      const found = await repo.getTab(root, getId(parts, 1))
       return found ? json(res, 200, { data: found }) : json(res, 404, { error: 'Not found' })
     }
-    if (parts[0] === 'cases' && parts[1] && method === 'PUT') {
-      const updated = await repo.updateCase(root, getId(parts, 1), await readBody(req))
+    if (parts[0] === 'tabs' && parts[1] && method === 'PUT') {
+      const updated = await repo.updateTab(root, getId(parts, 1), await readBody(req))
       if (!updated) return json(res, 404, { error: 'Not found' })
       return json(res, 200, { data: updated })
     }
-    if (parts[0] === 'cases' && parts[1] && method === 'DELETE') {
-      await repo.deleteCase(root, getId(parts, 1))
+    if (parts[0] === 'tabs' && parts[1] && method === 'DELETE') {
+      await repo.deleteTab(root, getId(parts, 1))
       return json(res, 200, { ok: true })
     }
 
@@ -349,7 +349,7 @@ export default function threadlineVitePlugin(options = {}) {
     // backend supports; projects/features/stories always list alphabetically) ----
     if (parts[0] === 'reorder' && method === 'POST') {
       const body = await readBody(req)
-      await repo.reorderCases(root, body.storyId, body.orderedIds)
+      await repo.reorderTabs(root, body.storyId, body.orderedIds)
       return json(res, 200, { ok: true })
     }
 
