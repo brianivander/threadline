@@ -4,12 +4,14 @@
 //   storyThreads — the open story's threads, read straight from its markdown
 //                  file. These drive the editor highlights, so they have to
 //                  match what's on disk exactly (anchors included).
-//   repoThreads  — every thread in the workspace, served from the SQLite index
-//                  (see the plugin's thread-index.js). Rows carry a `preview`
-//                  instead of full comment bodies, which is all the
-//                  cross-story lists render.
+//   repoThreads  — every thread in the workspace, from a live scan. ripgrep
+//                  finds the files that hold threads (a thread is a one-line
+//                  marker, so a file without one can't have any), so this is
+//                  fast enough to answer on every open with nothing cached
+//                  behind it. Rows carry a `preview` instead of full comment
+//                  bodies, which is all the cross-story lists render.
 //
-// The "For You" tab asks the index to do the mention filtering, because that's
+// The "For You" tab asks the server to do the mention filtering, because that's
 // the one filter that has to look inside comment bodies. Status and story
 // scope are applied in the panel — they're plain field comparisons on data
 // already in hand, so they don't need a round trip per dropdown change.
@@ -23,9 +25,6 @@ export function useComments({ root, storyId, userEmail, apiBase = API }) {
   const [repoThreads, setRepoThreads] = useState([])
   const [users, setUsers] = useState([])
   const [error, setError] = useState(null)
-  // Only the mention filter is server-side, so it's the only one that has to
-  // trigger a refetch.
-  const [mentionsOnly, setMentionsOnly] = useState(false)
 
   const api = useCallback(
     async (method, path, body) => {
@@ -62,13 +61,16 @@ export function useComments({ root, storyId, userEmail, apiBase = API }) {
       return
     }
     try {
-      const query = mentionsOnly && userEmail ? `?mentions=${encodeURIComponent(userEmail)}` : ''
-      const { data } = await api('GET', `/comments${query}`)
+      // Unfiltered, always. The scan returns every thread anyway (see
+      // repo.scanThreads), so filtering server-side would only mean a round
+      // trip each time a dropdown moved — and would leave the mention badge
+      // unable to count what the current filter had excluded.
+      const { data } = await api('GET', '/comments')
       setRepoThreads(data || [])
     } catch {
       setRepoThreads([])
     }
-  }, [api, root, mentionsOnly, userEmail])
+  }, [api, root])
 
   const refresh = useCallback(async () => {
     await Promise.all([fetchStoryThreads(), fetchRepoThreads()])
@@ -168,5 +170,14 @@ export function useComments({ root, storyId, userEmail, apiBase = API }) {
     }
   }, [api, fetchStoryThreads, fetchRepoThreads, userEmail])
 
-  return { storyThreads, repoThreads, users, error, actions, refresh, setMentionsOnly }
+  // What the comments badge shows: threads across the workspace that mention
+  // the current user and are still open. Unresolved only — a badge that keeps
+  // counting conversations you have already dealt with stops meaning anything.
+  const mentionCount = useMemo(() => {
+    const me = String(userEmail || '').toLowerCase()
+    if (!me) return 0
+    return repoThreads.filter((t) => t.status !== 'resolved' && (t.mentions || []).includes(me)).length
+  }, [repoThreads, userEmail])
+
+  return { storyThreads, repoThreads, users, error, actions, refresh, mentionCount }
 }

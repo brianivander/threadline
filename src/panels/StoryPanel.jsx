@@ -7,10 +7,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Globe,
-  MessageSquareText,
   MoreHorizontal,
-  PanelLeft,
   Plus,
   Trash2,
 } from 'lucide-react'
@@ -82,7 +79,6 @@ export default function StoryPanel({
   story,
   root,
   activeCaseIndex,
-  onToggleSidebar,
   onUpdateStory,
   onAddCase,
   onSelectCase,
@@ -93,13 +89,8 @@ export default function StoryPanel({
   onStoryDeleteRequest,
   onUpdateCase,
   onOpenLink,
-  browserOpen,
-  onToggleBrowser,
   threads = [],
   activeThreadId,
-  openCommentCount = 0,
-  commentsOpen,
-  onToggleComments,
   onRequestComment,
   onActivateThread,
   onOpenThread,
@@ -342,17 +333,10 @@ export default function StoryPanel({
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 px-4 pt-3">
-        {/* Controls that act on things OUTSIDE this story — the sidebar, the
-            comment panel, the browser — sit in tabs bolted to the panel's
-            edges. The story's own controls (delete, parameters) stay loose in
-            the row. The negative margin cancels the header's padding so each
-            tab can run flush to its edge. */}
-        <div className="-mx-4 mb-2 flex items-center gap-1">
-          <div className="bg-muted/60 border-border flex shrink-0 items-center rounded-r-lg border border-l-0 py-0.5 pr-1 pl-0.5">
-            <Button variant="ghost" size="icon-sm" aria-label="Toggle sidebar" title="Toggle sidebar" onClick={onToggleSidebar}>
-              <PanelLeft />
-            </Button>
-          </div>
+        {/* The story's own controls: rename, delete, and the parameters
+            fold. Everything that acts on another panel lives in the
+            column’s shared bar above (see EditorBar). */}
+        <div className="mb-2 flex items-center gap-1">
           <input
             ref={titleRef}
             className="hover:bg-accent focus:bg-accent min-w-0 flex-1 rounded-md border-none bg-transparent px-2 py-1.5 text-base font-semibold outline-none"
@@ -383,40 +367,6 @@ export default function StoryPanel({
           >
             <ChevronDown className={cn('transition-transform', paramsCollapsed ? '' : 'rotate-180')} />
           </Button>
-          <div className="bg-muted/60 border-border flex shrink-0 items-center gap-0.5 rounded-l-lg border border-r-0 py-0.5 pr-0.5 pl-1">
-            {/* The comment panel's toggle. The badge counts OPEN threads on
-                this story only — a resolved thread isn't something to act on,
-                and a count spanning the workspace would never settle. */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn('relative', commentsOpen ? 'text-primary' : '')}
-              aria-label={commentsOpen ? 'Hide comments' : 'Show comments'}
-              aria-pressed={commentsOpen}
-              title={commentsOpen ? 'Hide comments' : 'Show comments'}
-              onClick={onToggleComments}
-            >
-              <MessageSquareText />
-              {openCommentCount > 0 && (
-                <span className="bg-primary text-primary-foreground absolute -top-0.5 -right-0.5 flex size-3.5 items-center justify-center rounded-full text-[9px] font-semibold">
-                  {openCommentCount > 9 ? '9+' : openCommentCount}
-                </span>
-              )}
-            </Button>
-            {/* The browser panel's toggle. Opening a link's arrow reveals the
-                panel too, so the two stay in agreement. */}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(browserOpen ? 'text-primary' : '')}
-              aria-label={browserOpen ? 'Hide browser' : 'Show browser'}
-              aria-pressed={browserOpen}
-              title={browserOpen ? 'Hide browser' : 'Show browser'}
-              onClick={onToggleBrowser}
-            >
-              <Globe />
-            </Button>
-          </div>
         </div>
 
         {!paramsCollapsed && (

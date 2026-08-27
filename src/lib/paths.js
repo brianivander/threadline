@@ -13,8 +13,13 @@
 
 // A link with an explicit scheme — http(s), file, or any other `proto:` —
 // is treated as a URL and left alone. Everything else is a filesystem path.
+//
+// A scheme needs at least TWO characters: a one-letter one is a Windows drive
+// (`C:/repo/spec.md`), and reading that as a URL is how an absolute Windows
+// path ends up stored verbatim instead of being converted to the relative path
+// that survives a clone onto someone else's machine.
 export function hasUrlScheme(value) {
-  return /^[a-z][a-z0-9+.-]*:/i.test(String(value || '').trim())
+  return /^[a-z][a-z0-9+.-]+:/i.test(String(value || '').trim())
 }
 
 // An absolute filesystem path: a Windows drive letter (C:\ or C:/), a UNC
@@ -42,6 +47,29 @@ export function storyDirOf(root, storyId) {
   return [toPosix(root).replace(/\/+$/, ''), dir].filter(Boolean).join('/')
 }
 
+// A workspace-relative id ('folder/sub/spec.md') to the absolute path it names.
+// The id side of the app addresses files this way; the doc editor and the
+// browser both want a real path.
+export function workspacePathOf(root, id) {
+  if (!root || !id) return ''
+  return [toPosix(root).replace(/\/+$/, ''), toPosix(id).replace(/^\/+/, '')].join('/')
+}
+
+// The inverse, for pointing the sidebar's highlight at a file the editor has
+// open. Returns '' when the path is OUTSIDE the workspace — a story link can
+// resolve into another repo entirely, and there is no tree row to highlight for
+// one of those. Case-insensitively matched: the workspace root arrives from a
+// directory dialog and a link's path from text a user typed, and on Windows
+// those disagree on drive-letter case for the same folder.
+export function workspaceIdOf(root, absPath) {
+  const base = toPosix(root).replace(/\/+$/, '')
+  const target = toPosix(absPath)
+  if (!base || !target) return ''
+  const prefix = `${base}/`
+  if (target.slice(0, prefix.length).toLowerCase() !== prefix.toLowerCase()) return ''
+  return target.slice(prefix.length)
+}
+
 // Relative path from `fromDir` (absolute, POSIX-normalized) to `target`
 // (absolute, POSIX-normalized). Returns '../..'-style segments joined with '/',
 // or '.' when they're the same directory. Pure string work — no fs access, no
@@ -65,11 +93,49 @@ export function relativePath(fromDir, target) {
 // path) so callers can treat this as a pass-through normalization.
 export function toRelativePath(value, storyAbsDir) {
   const s = String(value || '').trim()
-  if (!s || !isAbsolutePath(s) || !storyAbsDir) return value
-  // Drop a file:// scheme if present, for peers that paste the URL a `file:`
-  // link gave them instead of the raw path.
-  const raw = s.replace(/^file:\/\/\//i, '').replace(/^file:\/\//i, '')
+  // A `file:` URL is unwrapped BEFORE the absolute-path test, not after: a peer
+  // may paste the URL a `file:` link handed them rather than the raw path, and
+  // tested as-is that value reads as "has a scheme, not a path" and is stored
+  // verbatim — machine-specific, which is the one thing this function exists to
+  // prevent.
+  const raw = /^file:/i.test(s) ? fromFileUrl(s) : s
+  if (!raw || !isAbsolutePath(raw) || !storyAbsDir) return value
   return relativePath(storyAbsDir, raw)
+}
+
+const MARKDOWN_EXT = /\.(md|markdown)$/i
+
+// A resolved link the markdown editor should open rather than the browser: a
+// local file whose name ends in .md/.markdown. A *web* URL ending in .md is
+// deliberately left to the browser — the server decides what it serves there,
+// and it may not be a file at all.
+export function isLocalMarkdownUrl(value) {
+  const s = String(value || '').trim()
+  if (!/^file:/i.test(s)) return false
+  // A query or hash can trail even a local URL once it's been through the
+  // address bar, and neither is part of the filename.
+  return MARKDOWN_EXT.test(s.split(/[?#]/)[0])
+}
+
+// The reverse of toFileUrl: a file:// URL back to a plain filesystem path,
+// percent-escapes decoded, so a workspace with spaces in its path survives the
+// round trip through the URL a browser tab holds. Returns '' for anything that
+// isn't a file:// URL.
+export function fromFileUrl(value) {
+  const s = String(value || '').trim()
+  const scheme = /^file:\/\/\/?/i.exec(s)
+  if (!scheme) return ''
+  const rest = s.slice(scheme[0].length).split(/[?#]/)[0]
+  let decoded = rest
+  try {
+    decoded = decodeURIComponent(rest)
+  } catch {
+    // A stray '%' isn't an escape sequence — keep the raw text rather than
+    // failing to open a file over a character in its name.
+  }
+  // toFileUrl glues `file:///` to a drive-letter path as-is but eats the
+  // leading slash of a POSIX one, so only the latter needs its root back.
+  return /^[a-zA-Z]:/.test(decoded) ? decoded : `/${decoded}`
 }
 
 // Build a file:// URL from an absolute POSIX path. `file:///C:/…` on Windows

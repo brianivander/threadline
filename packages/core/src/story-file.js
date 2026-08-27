@@ -1,5 +1,9 @@
 // Story file format — the on-disk representation of one story.
 //
+// The `<!-- threadline-story -->` marker on the second line is what separates
+// a story from any other markdown file sitting in the same workspace folder —
+// see isStoryFile() below.
+//
 //   ---
 //   criticality: P1
 //   links:
@@ -7,6 +11,8 @@
 //     - {url: "https://docs.google.com/spreadsheets/d/xyz"}
 //     - https://a-link-saved-before-tags-existed.test
 //   ---
+//
+//   <!-- threadline-story -->
 //
 //   <!-- case: Happy path -->
 //   Preconditions: ...
@@ -49,6 +55,20 @@
 // character offsets, so an edit elsewhere in the case doesn't shift them.
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
+
+// `<!-- threadline-story -->` on a line of its own, written directly under the
+// frontmatter — the file's declaration that it IS a Threadline story and not
+// merely a markdown file that happens to live in the workspace. The sidebar
+// lists every `.md` in the folder now, and a PRD, a TRD or a README opened
+// from it must not arrive wearing case tabs, a criticality and a comment
+// section it has no business having.
+//
+// An HTML comment rather than a frontmatter key, for the same reasons the case
+// and comment markers are: it stays invisible in every markdown renderer, it
+// survives a file with no frontmatter at all, and the format already speaks in
+// exactly this idiom.
+export const STORY_MARKER = '<!-- threadline-story -->'
+const STORY_MARKER_RE = /^[ \t]*<!--[ \t]*threadline-story[ \t]*-->[ \t]*$/i
 
 // `<!-- case: Name -->` on a line of its own. Case-insensitive on the keyword
 // so a hand-typed `<!-- Case: ... -->` still registers.
@@ -362,12 +382,65 @@ function serializeThreads(threads) {
   return blocks.join('\n\n')
 }
 
+// Does this markdown file claim to be a Threadline story?
+//
+// The `<!-- threadline-story -->` marker is the rule. The two fallbacks below
+// exist for files written before the marker did — every story this app has
+// ever saved carries either an explicit case/comments marker or a
+// `criticality` frontmatter key, and both are structure no plain document
+// would have. Those files gain the marker the next time they are written, so
+// the fallbacks are a migration path rather than a second definition.
+//
+// Deliberately NOT a signal: having a body at all. splitCases() reads a
+// marker-less body as one implicit "Case 1", so "it parsed into a case" is
+// true of literally every markdown file and says nothing.
+export function isStoryFile(raw) {
+  const text = String(raw || '')
+  const fmMatch = text.match(FRONTMATTER_RE)
+  const frontmatter = fmMatch ? parseYamlSubset(fmMatch[1]) : {}
+  const body = fmMatch ? text.slice(fmMatch[0].length) : text
+
+  let inFence = false
+  for (const line of body.split(/\r?\n/)) {
+    if (/^\s*```/.test(line)) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    if (STORY_MARKER_RE.test(line) || CASE_MARKER_RE.test(line) || COMMENTS_MARKER_RE.test(line)) return true
+  }
+  return frontmatter.criticality !== undefined
+}
+
+// Take the marker line back out of the body before it is split into cases —
+// left in, a story with no case markers would parse it as the text of its
+// implicit "Case 1" and show `<!-- threadline-story -->` as the case body.
+// Only the first one, and only ahead of any case/comments marker: past that
+// point it is content (a document about this format, quoting it).
+function stripStoryMarker(body) {
+  const lines = body.split(/\r?\n/)
+  let inFence = false
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*```/.test(lines[i])) {
+      inFence = !inFence
+      continue
+    }
+    if (inFence) continue
+    if (CASE_MARKER_RE.test(lines[i]) || COMMENTS_MARKER_RE.test(lines[i])) return body
+    if (STORY_MARKER_RE.test(lines[i])) {
+      lines.splice(i, 1)
+      return lines.join('\n')
+    }
+  }
+  return body
+}
+
 // raw (string) → { frontmatter: {criticality, links, ...unknown}, preamble, cases: [{name, body}] }
 export function parseStoryFile(raw) {
   const text = raw || ''
   const fmMatch = text.match(FRONTMATTER_RE)
   const frontmatter = fmMatch ? parseYamlSubset(fmMatch[1]) : {}
-  const body = fmMatch ? text.slice(fmMatch[0].length) : text
+  const body = stripStoryMarker(fmMatch ? text.slice(fmMatch[0].length) : text)
   const { caseRegion, commentRegion } = splitCommentSection(body)
   const { preamble, cases } = splitCases(caseRegion)
   if (!Array.isArray(frontmatter.links)) {
@@ -387,5 +460,8 @@ export function serializeStoryFile({ frontmatter = {}, preamble = '', cases = []
   const threadText = serializeThreads(threads)
   if (threadText) parts.push(`<!-- comments -->\n\n${threadText}`)
   const body = parts.join('\n\n')
-  return `---\n${fm}\n---\n\n${body ? body + '\n' : ''}`
+  // The marker goes in unconditionally: this is the story serializer, so
+  // anything it writes is a story — including a legacy file that reached here
+  // without one, which is how those get migrated.
+  return `---\n${fm}\n---\n\n${STORY_MARKER}\n\n${body ? body + '\n' : ''}`
 }

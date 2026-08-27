@@ -2,7 +2,7 @@
 // a BrowserWindow, and closes the server when the window closes — one command
 // (`npm start`) does both.
 //
-// Loading an http URL (never file://) is mandatory: <ThreadlinePanel> calls the
+// Loading an http URL (never file://) is mandatory: the board layout calls the
 // Threadline REST API at the relative path /api/threadline, so a static file
 // load would resolve those to file:///api/threadline and 404 every board
 // request. Unpackaged that server is Vite itself; packaged there is no Vite, so

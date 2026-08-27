@@ -1,13 +1,14 @@
-// The board's tree column: workspace bar, the tree itself, and the read-only
-// user footer. Dumb container — every action bubbles up through callbacks.
+// The board's tree column: every markdown and HTML file in the workspace,
+// under a workspace bar and above the read-only user footer. Dumb container — every action bubbles up through callbacks.
 // It owns only the root-level context menu and the root-level drop target
 // (dropping on empty space = move to the workspace root), because there is no
 // row to own those.
 
 import { useState } from 'react'
-import { FolderOpen, GitBranch, RefreshCw } from 'lucide-react'
+import { File, FileCode, FileText, FolderOpen, GitBranch, Image as ImageIcon, RefreshCw, Search, X } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -32,6 +33,84 @@ function WorkspaceBar({ workspaceName, onOpenWorkspace }) {
         <FolderOpen />
       </Button>
     </div>
+  )
+}
+
+// The tree opens collapsed, so a file the user hasn't expanded their way to is
+// invisible. This is how they reach it by name.
+function SearchBar({ value, onChange }) {
+  return (
+    <div className="relative shrink-0 border-b px-2 py-1.5">
+      <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-4 size-3 -translate-y-1/2" />
+      <Input
+        className="h-7 pl-7 text-[13px]"
+        placeholder="Search files"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation()
+          if (e.key === 'Escape') onChange('')
+        }}
+      />
+      {value ? (
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="absolute top-1/2 right-3 -translate-y-1/2"
+          aria-label="Clear search"
+          onClick={() => onChange('')}
+        >
+          <X />
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
+// Same glyph vocabulary as a tree row, so a result reads as the file it is.
+const RESULT_GLYPHS = { story: FileText, doc: File, page: FileCode, text: FileCode, image: ImageIcon }
+
+// Results are a flat list, not a tree: the point is to skip the hierarchy. The
+// containing folder is shown underneath the name because two files three
+// folders apart often share one.
+function SearchResults({ results, searching, query, selectedNodeId, onSelect }) {
+  if (searching && results.length === 0) {
+    return <p className="text-muted-foreground px-3 py-2 text-[13px] italic">Searching…</p>
+  }
+  if (results.length === 0) {
+    return <p className="text-muted-foreground px-3 py-2 text-[13px] italic">No files match “{query}”.</p>
+  }
+  return (
+    <ul className="m-0 list-none p-0">
+      {results.map((node) => {
+        const Glyph = RESULT_GLYPHS[node.kind] || File
+        const folder = node.id.includes('/') ? node.id.slice(0, node.id.lastIndexOf('/')) : ''
+        const selected = node.id === selectedNodeId
+        return (
+          <li key={node.id}>
+            <button
+              type="button"
+              className={
+                selected
+                  ? 'bg-accent text-accent-foreground border-primary flex w-full items-center gap-1.5 border-l-2 px-[calc(0.75rem-2px)] py-1 text-left text-[13px] font-semibold'
+                  : 'text-muted-foreground hover:bg-accent/50 flex w-full items-center gap-1.5 border-l-2 border-transparent px-[calc(0.75rem-2px)] py-1 text-left text-[13px]'
+              }
+              onClick={() => onSelect(node)}
+            >
+              <Glyph className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 overflow-hidden">
+                <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{node.title}</span>
+                {folder ? (
+                  <span className="text-muted-foreground/70 block overflow-hidden text-[11px] text-ellipsis whitespace-nowrap">
+                    {folder}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -129,16 +208,23 @@ function UserFooter({ onUserEmailChange, sync }) {
   )
 }
 
-export default function Sidebar({
-  tree,
-  selectedStoryId,
-  collapsedNodes,
+export default function SidebarPanel({
+  rootNodes,
+  selectedNodeId,
+  expandedIds,
+  loadingIds,
+  childrenOf,
+  searchQuery,
+  onSearchQueryChange,
+  searchResults,
+  searching,
+  onSelectSearchResult,
   workspaceName,
   userEmail,
   onUserEmailChange,
   sync,
   onOpenWorkspace,
-  onSelectStory,
+  onSelectFile,
   onToggleNode,
   onAddNode,
   onRenameNode,
@@ -169,6 +255,7 @@ export default function Sidebar({
   return (
     <div className="bg-muted/20 flex h-full flex-col overflow-hidden border-r">
       <WorkspaceBar workspaceName={workspaceName} onOpenWorkspace={onOpenWorkspace} />
+      <SearchBar value={searchQuery} onChange={onSearchQueryChange} />
 
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -182,24 +269,39 @@ export default function Sidebar({
             onDragLeave={() => setRootDropActive(false)}
             onDrop={onRootDrop}
           >
-            <ul className="m-0 list-none p-0">
-              {(tree || []).map((node) => (
-                <TreeNode
-                  key={node.id}
-                  node={node}
-                  type={node.type}
-                  selectedStoryId={selectedStoryId}
-                  collapsedNodes={collapsedNodes}
-                  onSelectStory={onSelectStory}
-                  onToggleNode={onToggleNode}
-                  onAddNode={onAddNode}
-                  onRenameNode={onRenameNode}
-                  onDuplicateRequest={onDuplicateRequest}
-                  onDeleteRequest={onDeleteRequest}
-                  onMoveNode={onMoveNode}
-                />
-              ))}
-            </ul>
+            {searchQuery.trim() ? (
+              // The tree is replaced rather than filtered: a hit's ancestors
+              // may not be loaded, and half-drawn branches would read as the
+              // workspace having lost folders.
+              <SearchResults
+                results={searchResults}
+                searching={searching}
+                query={searchQuery.trim()}
+                selectedNodeId={selectedNodeId}
+                onSelect={onSelectSearchResult}
+              />
+            ) : (
+              <ul className="m-0 list-none p-0">
+                {(rootNodes || []).map((node) => (
+                  <TreeNode
+                    key={node.id}
+                    node={node}
+                    type={node.type}
+                    selectedNodeId={selectedNodeId}
+                    expandedIds={expandedIds}
+                    loadingIds={loadingIds}
+                    childrenOf={childrenOf}
+                    onSelectFile={onSelectFile}
+                    onToggleNode={onToggleNode}
+                    onAddNode={onAddNode}
+                    onRenameNode={onRenameNode}
+                    onDuplicateRequest={onDuplicateRequest}
+                    onDeleteRequest={onDeleteRequest}
+                    onMoveNode={onMoveNode}
+                  />
+                ))}
+              </ul>
+            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>

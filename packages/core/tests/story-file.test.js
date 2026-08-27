@@ -2,7 +2,7 @@
 // marker splitting.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseStoryFile, serializeStoryFile } from '../src/story-file.js'
+import { isStoryFile, parseStoryFile, serializeStoryFile, STORY_MARKER } from '../src/story-file.js'
 
 test('parses frontmatter (criticality, links) and case sections', () => {
   const raw = `---
@@ -285,4 +285,53 @@ test('a non-numeric or zero nth is dropped rather than trusted', () => {
   assert.equal('nth' in parseStoryFile(base('nth=oops')).threads[0].anchor, false)
   assert.equal('nth' in parseStoryFile(base('nth=0')).threads[0].anchor, false)
   assert.equal(parseStoryFile(base('nth=3')).threads[0].anchor.nth, 3)
+})
+
+
+// ---- the story marker ---------------------------------------------------------
+
+test('isStoryFile: the marker is the rule', () => {
+  assert.equal(isStoryFile('<!-- threadline-story -->\n'), true)
+  assert.equal(isStoryFile('---\nlinks:\n---\n\n<!-- threadline-story -->\n'), true)
+  // Case-insensitive and tolerant of the whitespace a formatter might add.
+  assert.equal(isStoryFile('  <!--  Threadline-Story  -->  \n'), true)
+
+  assert.equal(isStoryFile('# A PRD\n\nProse.\n'), false)
+  assert.equal(isStoryFile(''), false)
+  assert.equal(isStoryFile('---\ntitle: A spec\n---\n\nProse.\n'), false)
+})
+
+test('isStoryFile: legacy structure counts, and a code fence does not', () => {
+  // Files written before the marker existed.
+  assert.equal(isStoryFile('<!-- case: Happy -->\n\nok\n'), true)
+  assert.equal(isStoryFile('---\ncriticality: P1\n---\n\nnotes\n'), true)
+  assert.equal(isStoryFile('<!-- comments -->\n'), true)
+
+  // A document explaining the format quotes it inside a fence — that is
+  // content, not a declaration.
+  assert.equal(isStoryFile('```md\n<!-- threadline-story -->\n<!-- case: X -->\n```\n'), false)
+})
+
+test('serializeStoryFile writes the marker, and parsing takes it back out', () => {
+  const out = serializeStoryFile({ frontmatter: { criticality: 'P1' }, cases: [] })
+  assert.match(out, /^---\ncriticality: P1\n---\n\n<!-- threadline-story -->\n/)
+  assert.equal(isStoryFile(out), true)
+
+  // The marker must not survive into the body, or a story with no case markers
+  // would show it as the text of its implicit "Case 1".
+  assert.deepEqual(parseStoryFile(out).cases, [])
+
+  const withCase = serializeStoryFile({ frontmatter: {}, cases: [{ name: 'Happy', body: 'ok' }] })
+  assert.deepEqual(parseStoryFile(withCase).cases, [{ name: 'Happy', body: 'ok' }])
+  assert.equal(parseStoryFile(withCase).preamble, '', 'the marker is not left behind as a preamble')
+
+  // Round-tripping does not stack a second marker on top of the first.
+  const twice = serializeStoryFile({ frontmatter: {}, ...parseStoryFile(withCase) })
+  assert.equal(twice.split(STORY_MARKER).length - 1, 1)
+})
+
+test('a marker-less body is still read as one implicit case', () => {
+  // The marker is stripped from the lead only; free-form notes below it stay.
+  const parsed = parseStoryFile('<!-- threadline-story -->\n\nfree-form notes\n')
+  assert.deepEqual(parsed.cases, [{ name: 'Case 1', body: 'free-form notes' }])
 })

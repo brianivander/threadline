@@ -9,6 +9,10 @@ import {
   relativePath,
   toRelativePath,
   resolveLocalLink,
+  isLocalMarkdownUrl,
+  fromFileUrl,
+  workspacePathOf,
+  workspaceIdOf,
 } from './paths.js'
 
 test('hasUrlScheme recognises web and file URLs but not bare paths', () => {
@@ -81,4 +85,58 @@ test('a round trip: paste absolute, store relative, reopen as file://', () => {
   const stored = toRelativePath(pasted, storyDir)
   assert.equal(stored, '../designs/mock.html')
   assert.equal(resolveLocalLink(stored, storyDir), 'file:///C:/Users/brian/threadline/designs/mock.html')
+})
+
+test('isLocalMarkdownUrl matches local .md files only, never a web URL', () => {
+  assert.equal(isLocalMarkdownUrl('file:///C:/repo/spec.md'), true)
+  assert.equal(isLocalMarkdownUrl('file:///Users/b/notes.markdown'), true)
+  assert.equal(isLocalMarkdownUrl('file:///C:/repo/mock.html'), false)
+  // A server decides what it serves at a .md path — that stays a web page.
+  assert.equal(isLocalMarkdownUrl('https://example.com/README.md'), false)
+  assert.equal(isLocalMarkdownUrl(''), false)
+})
+
+test('fromFileUrl reverses toFileUrl, decoding escapes', () => {
+  assert.equal(fromFileUrl('file:///C:/repo/spec.md'), 'C:/repo/spec.md')
+  assert.equal(fromFileUrl('file:///repo/spec.md'), '/repo/spec.md')
+  assert.equal(fromFileUrl('file:///C:/01%20Passion/spec.md'), 'C:/01 Passion/spec.md')
+  // A literal '%' in a filename isn't an escape sequence; keep it verbatim.
+  assert.equal(fromFileUrl('file:///C:/a%/b.md'), 'C:/a%/b.md')
+  assert.equal(fromFileUrl('https://example.com/x.md'), '')
+})
+
+test('a markdown link survives the whole round trip into a doc tab', () => {
+  const storyDir = 'C:/Users/brian/01 Passion/projects'
+  const stored = toRelativePath('C:\\Users\\brian\\01 Passion\\docs\\prd.md', storyDir)
+  assert.equal(stored, '../docs/prd.md')
+  const url = resolveLocalLink(stored, storyDir)
+  assert.equal(isLocalMarkdownUrl(url), true)
+  assert.equal(fromFileUrl(url), 'C:/Users/brian/01 Passion/docs/prd.md')
+})
+
+
+test('workspacePathOf joins a workspace root and a relative id', () => {
+  assert.equal(workspacePathOf('C:/repo', 'folder/sub/spec.md'), 'C:/repo/folder/sub/spec.md')
+  assert.equal(workspacePathOf('C:\\repo\\', 'folder\\spec.md'), 'C:/repo/folder/spec.md')
+  assert.equal(workspacePathOf('/repo', 'spec.md'), '/repo/spec.md')
+  assert.equal(workspacePathOf('', 'spec.md'), '')
+  assert.equal(workspacePathOf('C:/repo', ''), '')
+})
+
+test('workspaceIdOf recovers the id, and reports nothing for a path outside the workspace', () => {
+  assert.equal(workspaceIdOf('C:/repo', 'C:/repo/folder/spec.md'), 'folder/spec.md')
+  assert.equal(workspaceIdOf('C:/repo/', 'C:\\repo\\spec.md'), 'spec.md')
+  // A story link can resolve into a different repo entirely — no row to point at.
+  assert.equal(workspaceIdOf('C:/repo', 'C:/other/spec.md'), '')
+  // A sibling whose name merely starts the same way is not inside it.
+  assert.equal(workspaceIdOf('C:/repo', 'C:/repo-archive/spec.md'), '')
+  // The root itself is not a file in the tree.
+  assert.equal(workspaceIdOf('C:/repo', 'C:/repo'), '')
+  // A directory dialog and a hand-typed link disagree on drive-letter case.
+  assert.equal(workspaceIdOf('C:/repo', 'c:/repo/spec.md'), 'spec.md')
+})
+
+test('workspacePathOf and workspaceIdOf round-trip', () => {
+  const id = 'folder/sub/A spec.md'
+  assert.equal(workspaceIdOf('C:/repo', workspacePathOf('C:/repo', id)), id)
 })

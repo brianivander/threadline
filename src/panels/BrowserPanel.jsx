@@ -181,7 +181,7 @@ function BrowserTab({ url, active, isElectron, onNavigate, onFavicon }) {
   )
 }
 
-const EmbedViewer = forwardRef(function EmbedViewer(_props, ref) {
+const BrowserPanel = forwardRef(function BrowserPanel(_props, ref) {
   const isElectron = typeof window !== 'undefined' && !!window.threadlineDesktop?.isElectron
   // Starts with one blank tab so the panel always shows a live browser (nav
   // row + address bar), never an empty instructional placeholder.
@@ -332,4 +332,4 @@ const EmbedViewer = forwardRef(function EmbedViewer(_props, ref) {
   )
 })
 
-export default EmbedViewer
+export default BrowserPanel

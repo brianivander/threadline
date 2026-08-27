@@ -274,7 +274,6 @@ export default function CommentsPanel({
   onSelectStory,
   onActivateThread,
   onClearPendingAnchor,
-  onSetMentionsOnly,
   actions,
 }) {
   const [tab, setTab] = useState('all')
@@ -292,9 +291,8 @@ export default function CommentsPanel({
   // "For You" spans the workspace by definition — a mention you have to go
   // looking for story by story isn't an inbox.
   useEffect(() => {
-    onSetMentionsOnly(tab === 'you')
     if (tab === 'you') setScope('all')
-  }, [tab, onSetMentionsOnly])
+  }, [tab])
 
   // A selection arriving from the editor's right-click → Comment opens the
   // composer with that anchor attached.
@@ -309,11 +307,17 @@ export default function CommentsPanel({
 
   const rows = useMemo(() => {
     let list = repoThreads
+    // Every filter is local now — the repo list arrives whole, so a dropdown
+    // change costs nothing.
+    if (tab === 'you') {
+      const me = String(userEmail || '').toLowerCase()
+      list = me ? list.filter((t) => (t.mentions || []).includes(me)) : []
+    }
     if (scope === 'story') list = list.filter((t) => t.story_id === storyId)
     if (status !== 'all') list = list.filter((t) => t.status === status)
     // Swap in the full thread wherever we have it: same row, real conversation.
-    return list.map((t) => byId.get(t.id) ? { ...t, ...byId.get(t.id) } : t)
-  }, [repoThreads, scope, status, storyId, byId])
+    return list.map((t) => (byId.get(t.id) ? { ...t, ...byId.get(t.id) } : t))
+  }, [repoThreads, tab, userEmail, scope, status, storyId, byId])
 
   function submitNew() {
     const body = draft.trim()
@@ -367,7 +371,11 @@ export default function CommentsPanel({
             variant="outline"
             size="xs"
             disabled={!storyId}
-            title={storyId ? 'Comment on this story' : 'Select a story first'}
+            // A comment lives in its story's own markdown file (see
+            // story-file.js), so there is nowhere to put one when the open file
+            // isn't a story. The panel itself stays useful either way — the
+            // workspace-wide lists below don't depend on what's open.
+            title={storyId ? 'Comment on this story' : 'Open a story to comment — this file can’t hold comments'}
             onClick={() => {
               onClearPendingAnchor()
               setReplyingTo(null)
@@ -441,9 +449,13 @@ export default function CommentsPanel({
           <p className="text-muted-foreground px-1 py-6 text-center text-[13px]">
             {tab === 'you'
               ? 'No comments mention you.'
-              : status === 'open'
-                ? 'No open comments here.'
-                : 'No comments yet.'}
+              : // "This story" can't be the reason when no story is open. Say
+                // what's actually true, or the empty panel reads as a bug.
+                !storyId && scope === 'story'
+                ? 'Comments live in stories. Open one, or switch to All stories.'
+                : status === 'open'
+                  ? 'No open comments here.'
+                  : 'No comments yet.'}
           </p>
         ) : (
           <div className="flex flex-col gap-2">

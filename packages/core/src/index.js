@@ -7,6 +7,8 @@ export { parseStoryFile, serializeStoryFile, THREAD_STATUSES } from './story-fil
 
 export {
   CRITICALITIES,
+  FILE_EXTS,
+  TEXT_OPEN_EXTS,
   listFolders,
   getFolder,
   createFolder,
@@ -26,6 +28,8 @@ export {
   moveNode,
   duplicateNode,
   buildTree,
+  listChildren,
+  searchFiles,
   listThreads,
   createThread,
   addReply,

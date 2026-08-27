@@ -1,12 +1,37 @@
 // Threadline filesystem repository — replaces the SQLite-backed models.js.
 //
 // A workspace is a plain directory tree of arbitrary depth: any folder can
-// hold any number of subfolders and `.md` files. Folders ARE directories
-// (their name is their id's last segment); files ARE markdown files (see
-// story-file.js for the on-disk format — frontmatter + `<!-- case: Name -->`
-// delimited cases). There's no separate sort_order: folders and files list
-// alphabetically by name (folders first, then files); cases keep the order
-// they appear in the file (reordered by rewriting it).
+// hold any number of subfolders and files. Folders ARE directories (their name
+// is their id's last segment). There's no separate sort_order: folders and
+// files list alphabetically by name (folders first, then files); cases keep the
+// order they appear in the file (reordered by rewriting it).
+//
+// Every file node carries a `kind` saying what it is — the tree is the app's
+// file explorer, not just its story list:
+//
+//   'story' — a `.md`/`.markdown` file carrying the `<!-- threadline-story -->`
+//             marker (see story-file.js): frontmatter + `<!-- case: Name -->`
+//             delimited cases + a comment section.
+//   'doc'   — any other markdown file: a PRD, a TRD, a README that simply
+//             lives in the workspace. Read and written as plain text through
+//             the /doc route; this module only lists, renames, moves, copies
+//             and deletes it.
+//   'page'  — an `.html`/`.htm` file, opened in the embedded browser.
+//   'image' — a `.png`/`.jpg`/`.svg`/… file, likewise. A mockup sitting next to
+//             the story it belongs to is part of the context this tree is for.
+//
+// A node's `title` is its filename with the extension taken off, for every kind
+// alike, and `ext` carries that extension separately ('md', 'html', 'png') so
+// the UI can label the row without re-parsing the name. For a story the
+// filename IS the title, so this is the only honest reading; for the rest it
+// keeps `notes.md` and `notes.png` telling themselves apart through the label
+// rather than through a duplicated '.md' in the text. A rename puts the
+// extension back — see filenameFor.
+//
+// Only a 'story' has cases, criticality, links or comment threads. Everything
+// that mutates those re-reads the file first and finds none on the other kinds,
+// so a mis-routed call comes back empty rather than rewriting the file into a
+// shape it never had. A page or an image is never opened for reading at all.
 //
 // Comment threads live in the same markdown file, in its `<!-- comments -->`
 // section — so they clone, diff and read as prose alongside the story they're
@@ -24,9 +49,50 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { parseStoryFile, serializeStoryFile } from './story-file.js'
+import { isStoryFile, parseStoryFile, serializeStoryFile } from './story-file.js'
+import * as search from './search.js'
 
 export const CRITICALITIES = ['P1', 'P2', 'P3', 'P4']
+
+// The tree lists EVERY file — it is the workspace's file explorer, not a
+// filtered view of the parts this app happens to edit. A spreadsheet sitting
+// next to a story is part of the context the tree is for, and hiding it makes
+// the tree lie about what's on disk.
+//
+// What differs by extension is what OPENING one does, which is the `kind`:
+// markdown may be a story or a plain document (only the file's own content
+// decides which — see readFile_); pages and images are known by extension
+// alone; everything else is 'other', listed but not openable here.
+const MARKDOWN_EXTS = ['.md', '.markdown']
+const PAGE_EXTS = ['.html', '.htm']
+const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif']
+const PDF_EXTS = ['.pdf']
+
+// Files that are plain text, opened in a text editor rather than the markdown
+// one — a config beside a story is worth reading without leaving the app.
+//
+// An explicit list rather than "anything not obviously binary": guessing wrong
+// the other way means rendering a few megabytes of binary as garbage, and a
+// list of extensions is a thing to extend, not a thing to debug.
+const TEXT_EXTS = [
+  '.txt', '.text', '.log', '.csv', '.tsv',
+  '.json', '.jsonl', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.conf', '.env', '.xml',
+  '.css', '.scss', '.less', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx',
+  '.py', '.rb', '.go', '.rs', '.java', '.kt', '.php', '.sh', '.bash', '.ps1', '.sql', '.graphql',
+]
+
+// The extensions this module knows how to open. NOT a filter on what the tree
+// shows — it's what `filenameFor` treats as a deliberate extension change on
+// rename, and what decides a markdown file is worth reading.
+export const FILE_EXTS = [...MARKDOWN_EXTS, ...PAGE_EXTS, ...IMAGE_EXTS, ...PDF_EXTS, ...TEXT_EXTS]
+
+// What /text is allowed to read and write. HTML is in here because an .html
+// file is editable source as well as a page to look at — the app edits the
+// text and hands the browser the preview.
+export const TEXT_OPEN_EXTS = [...TEXT_EXTS, ...PAGE_EXTS]
+
+// The extension a new file gets when nothing says otherwise.
+const DEFAULT_EXT = '.md'
 
 // ---- path helpers -----------------------------------------------------------
 
@@ -71,6 +137,62 @@ function sanitizeName(str) {
   return cleaned || 'Untitled'
 }
 
+// The trailing '.ext' of a name EXACTLY as the file spells it, or '' when it
+// has none. Only the last dot counts, so 'spec v1.2.md' keeps '.md'.
+//
+// Case matters here and is preserved: path.basename(name, ext) strips `ext`
+// only on an exact match, so stripping a lowercased '.jpg' off 'photo.JPG'
+// silently leaves the extension in the title. A rename reattaches this same
+// text for the same reason — renaming a file is no occasion to quietly
+// reletter its extension.
+function rawExtOf(name) {
+  const base = toPosix(name).split('/').pop() || ''
+  // A leading dot is a hidden name, not an extension: ".gitignore" is a file
+  // called ".gitignore", and reporting "gitignore" as its type would put a
+  // GITIGNORE tag on the row and leave a rename with nothing to reattach.
+  const dot = base.lastIndexOf('.')
+  return dot > 0 ? base.slice(dot) : ''
+}
+
+// The same, lowercased — for comparing against the extension sets, which a
+// file is a member of however it happens to be spelled.
+function extOf(name) {
+  return rawExtOf(name).toLowerCase()
+}
+
+// The kind of a file this module never reads — decided by extension, because
+// either there is nothing inside to consult or opening it would be reckless.
+// Returns null only for markdown, whose kind depends on its contents.
+//
+// 'other' is the catch-all: a .zip, a .xlsx, a 900 MB video. It is listed in
+// the tree and described here, but never read — which is the whole point of
+// deciding by extension before touching the file.
+//
+// A file with no extension at all ('.gitignore', 'Dockerfile', 'LICENSE') is
+// text: those are written to be read, and there is no extension to consult.
+function unreadFileKind(name) {
+  const ext = extOf(name)
+  if (MARKDOWN_EXTS.includes(ext)) return null
+  if (PAGE_EXTS.includes(ext)) return 'page'
+  if (IMAGE_EXTS.includes(ext)) return 'image'
+  if (PDF_EXTS.includes(ext)) return 'pdf'
+  if (TEXT_EXTS.includes(ext) || ext === '') return 'text'
+  return 'other'
+}
+
+// A rename carries a title; this turns it back into a filename.
+//
+// One rule covers both kinds. A story is titled 'Login' and the extension is
+// invisible to the user, so it gets appended. A doc or a page is listed under
+// its real filename ('spec.md'), so a rename that already ends in a known
+// extension is taken verbatim — including a deliberate 'spec.md' -> 'spec.html'.
+// Anything else keeps the extension the file already had, which is the only
+// safe default: silently turning a `.html` into a `.md` would strand the file.
+function filenameFor(title, currentExt) {
+  const base = sanitizeName(title)
+  return FILE_EXTS.includes(extOf(base)) ? base : `${base}${currentExt || DEFAULT_EXT}`
+}
+
 async function pathExists(p) {
   try {
     await fs.stat(p)
@@ -81,9 +203,11 @@ async function pathExists(p) {
 }
 
 // Find a directory/file name under `parentAbs` that doesn't collide with an
-// existing entry, appending ' (2)', ' (3)', ... as needed.
-async function uniqueName(parentAbs, base, { isFile = false } = {}) {
-  const candidateName = (n) => (isFile ? `${base}${n ? ` (${n + 1})` : ''}.md` : `${base}${n ? ` (${n + 1})` : ''}`)
+// existing entry, appending ' (2)', ' (3)', ... as needed. `base` never
+// includes the extension: the counter has to land before it ('spec (2).md',
+// not 'spec.md (2)'), so the two are only glued together here.
+async function uniqueName(parentAbs, base, { ext = '' } = {}) {
+  const candidateName = (n) => `${base}${n ? ` (${n + 1})` : ''}${ext}`
   let n = 0
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -93,11 +217,42 @@ async function uniqueName(parentAbs, base, { isFile = false } = {}) {
   }
 }
 
+// Run `fn` over `items` at most `limit` at a time. Plain Promise.all over a
+// directory listing fans out one operation per entry, and a folder with a
+// thousand subdirectories then opens a thousand files at once — which on
+// Windows, with a virus scanner inspecting each one, is slower than doing them
+// in batches and can stall the process outright.
+const FS_CONCURRENCY = 12
+
+async function mapLimit(items, fn, limit = FS_CONCURRENCY) {
+  const out = new Array(items.length)
+  let next = 0
+  const workers = new Array(Math.min(limit, items.length)).fill(null).map(async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      out[i] = await fn(items[i], i)
+    }
+  })
+  await Promise.all(workers)
+  return out
+}
+
+// Directories the tree never shows. A dotted name is NOT enough to qualify:
+// `.claude`, `.github` and `.opencode` hold real, editable content and the
+// tree is the app's file explorer. `.git` is the one exception — it's git's
+// own database, not authored content, and nothing in it is worth browsing.
+const HIDDEN_DIRS = ['.git']
+
+function isHiddenDir(name) {
+  return HIDDEN_DIRS.includes(name.toLowerCase())
+}
+
 async function listDirs(absDir) {
   try {
     const entries = await fs.readdir(absDir, { withFileTypes: true })
     return entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+      .filter((e) => e.isDirectory() && !isHiddenDir(e.name))
       .map((e) => e.name)
       .sort((a, b) => a.localeCompare(b))
   } catch {
@@ -105,16 +260,42 @@ async function listDirs(absDir) {
   }
 }
 
-async function listMdFiles(absDir) {
+// Does this folder hold anything the tree would show? Answered without
+// listing the folder's contents into memory, because it's asked once per
+// visible folder purely to decide whether to draw an expand arrow.
+async function hasVisibleChildren(absDir) {
+  try {
+    const entries = await fs.readdir(absDir, { withFileTypes: true })
+    return entries.some((e) => (e.isDirectory() ? !isHiddenDir(e.name) : e.isFile()))
+  } catch {
+    return false
+  }
+}
+
+// `exts` null lists every file; otherwise only those extensions. Dotfiles are
+// listed either way — `.gitignore` and `.env.example` are files a file explorer
+// shows, and the tree already shows dot folders.
+async function listFilesWithExt(absDir, exts) {
   try {
     const entries = await fs.readdir(absDir, { withFileTypes: true })
     return entries
-      .filter((e) => e.isFile() && e.name.endsWith('.md') && !e.name.startsWith('.'))
+      .filter((e) => e.isFile() && (!exts || exts.includes(extOf(e.name))))
       .map((e) => e.name)
       .sort((a, b) => a.localeCompare(b))
   } catch {
     return []
   }
+}
+
+// Everything in one folder — the tree hides no files.
+function listWorkspaceFiles(absDir) {
+  return listFilesWithExt(absDir, null)
+}
+
+// Markdown only — the thread scan reads story files, and an HTML page has no
+// comment section to find.
+function listMdFiles(absDir) {
+  return listFilesWithExt(absDir, MARKDOWN_EXTS)
 }
 
 // ---- folders ------------------------------------------------------------------
@@ -185,21 +366,53 @@ function serializeLinks(links) {
   }))
 }
 
+// A file the tree lists but this module never parses: an HTML page, an image,
+// or a markdown file that isn't a story. `cases`/`threads` are present and
+// empty rather than absent, so every caller that reaches for them gets "none"
+// and not a crash.
+function plainFileNode(root, id, kind) {
+  const abs = resolveSafe(root, id)
+  const ext = rawExtOf(abs)
+  return {
+    id: toPosix(id),
+    parent_id: parentId(id),
+    kind,
+    ext: ext.replace(/^\./, '').toLowerCase(),
+    title: path.basename(abs, ext),
+    cases: [],
+    threads: [],
+  }
+}
+
 // Read + parse one file into the shape callers expect: metadata fields
 // spread alongside a `cases` array (each case has an ephemeral `id`, valid
 // only until the file's cases are next mutated — same lifetime assumption
 // the UI already makes between a tree fetch and the next single action).
+//
+// Only a story is parsed. A page or an image isn't opened at all, and a
+// markdown file that doesn't declare itself a story is described without being
+// interpreted: the story fields it would otherwise be given (a default 'P1'
+// criticality, an implicit "Case 1" holding its entire text) are fictions, and
+// the tree would then offer to edit a README as though it had cases.
 async function readFile_(root, id) {
   const abs = resolveSafe(root, id)
+  const unread = unreadFileKind(id)
+  if (unread) return (await pathExists(abs)) ? plainFileNode(root, id, unread) : null
+
   const raw = await fs.readFile(abs, 'utf8').catch(() => null)
   if (raw === null) return null
+  if (!isStoryFile(raw)) return plainFileNode(root, id, 'doc')
+
   const { frontmatter, cases, threads } = parseStoryFile(raw)
   const { criticality, links, ...rest } = frontmatter
-  const title = path.basename(abs, '.md')
+  // The filename IS the title, so the extension is presentation, not content.
+  const ext = rawExtOf(abs)
   return {
     id: toPosix(id),
     parent_id: parentId(id),
-    title,
+    kind: 'story',
+    ext: ext.replace(/^\./, '').toLowerCase(),
+    title: path.basename(abs, ext),
     criticality: criticality || 'P1',
     links: normalizeLinks(links),
     _extra: rest,
@@ -223,10 +436,10 @@ async function writeFile_(root, id, file) {
   await fs.writeFile(abs, content, 'utf8')
 }
 
-// Tree/list payloads carry metadata only. `cases` are re-attached by
-// buildTree where they're needed; `threads` never travel with a file — they're
-// fetched through listThreads/scanThreads, so a workspace with a busy comment
-// history doesn't bloat every tree fetch.
+// Tree/list payloads carry metadata only. Neither `cases` nor `threads` travel
+// with a file: cases are fetched per open story through listCases, threads
+// through listThreads/scanThreads. A workspace with many stories or a busy
+// comment history doesn't bloat every tree fetch.
 function stripDetail(file) {
   const { cases, threads, ...meta } = file
   return meta
@@ -234,8 +447,8 @@ function stripDetail(file) {
 
 export async function listFiles(root, parentId_) {
   const abs = parentId_ ? resolveSafe(root, parentId_) : path.resolve(root)
-  const names = await listMdFiles(abs)
-  const files = await Promise.all(names.map((name) => readFile_(root, joinId(parentId_, name))))
+  const names = await listWorkspaceFiles(abs)
+  const files = await mapLimit(names, (name) => readFile_(root, joinId(parentId_, name)))
   return files.filter(Boolean).map(stripDetail)
 }
 
@@ -248,7 +461,7 @@ export async function createFile(root, data) {
   const parentAbs = data?.parent_id ? resolveSafe(root, data.parent_id) : path.resolve(root)
   await fs.mkdir(parentAbs, { recursive: true })
   const base = sanitizeName(data?.title || 'Untitled file')
-  const filename = await uniqueName(parentAbs, base, { isFile: true })
+  const filename = await uniqueName(parentAbs, base, { ext: DEFAULT_EXT })
   const id = joinId(data?.parent_id, filename)
   await writeFile_(root, id, {
     criticality: data?.criticality || 'P1',
@@ -258,21 +471,42 @@ export async function createFile(root, data) {
   return getFile(root, id)
 }
 
+// The id a rename would move this file to — the new filename, made unique
+// against its own folder. Nothing is moved here; the caller decides when.
+async function renamedIdOf(root, id, existing, title) {
+  const abs = resolveSafe(root, id)
+  const desired = filenameFor(title, rawExtOf(id))
+  const ext = rawExtOf(desired)
+  const base = desired.slice(0, desired.length - ext.length)
+  const filename = await uniqueName(path.dirname(abs), base, { ext })
+  return joinId(existing.parent_id, filename)
+}
+
 export async function updateFile(root, id, data) {
   const existing = await readFile_(root, id)
   if (!existing) return null
+  const renaming = data?.title !== undefined && data.title !== existing.title
+
+  // A doc or a page has no story structure to merge into, and writeFile_ would
+  // re-serialize it AS a story — flattening a hand-written PRD into a
+  // frontmatter block and an implicit case, or overwriting an HTML file with
+  // markdown. Renaming is the only edit this route makes to one; its text is
+  // edited through the /doc route (markdown) or not at all (HTML).
+  if (existing.kind !== 'story') {
+    if (!renaming) return getFile(root, id)
+    const newId = await renamedIdOf(root, id, existing, data.title)
+    await fs.rename(resolveSafe(root, id), resolveSafe(root, newId))
+    return getFile(root, newId)
+  }
+
   const merged = { ...existing, ...data }
   let finalId = toPosix(id)
 
   // Title changes rename the file (filename IS the title).
-  if (data?.title !== undefined && data.title !== existing.title) {
-    const abs = resolveSafe(root, id)
-    const parentAbs = path.dirname(abs)
-    const base = sanitizeName(data.title)
-    const filename = await uniqueName(parentAbs, base, { isFile: true })
-    const newId = joinId(existing.parent_id, filename)
+  if (renaming) {
+    const newId = await renamedIdOf(root, id, existing, data.title)
     await writeFile_(root, id, merged) // write new content under the OLD path first
-    await fs.rename(abs, resolveSafe(root, newId))
+    await fs.rename(resolveSafe(root, id), resolveSafe(root, newId))
     finalId = newId
   } else {
     await writeFile_(root, id, merged)
@@ -526,24 +760,46 @@ export async function deleteThread(root, storyId, threadId, data) {
   })
 }
 
-// Walk every `.md` file in the workspace and collect its threads. This is what
-// answers "all comments in this repo" and rebuilds the SQLite index; it reads
-// each file once, so it's cheap enough to run on app start and after a write.
+// Every comment thread in the workspace — what answers "all comments in this
+// repo" and "everything that mentions me".
+//
+// The candidate files are found with ripgrep rather than by walking: a thread
+// is written as a one-line `<!-- thread ... -->` marker (see story-file.js), so
+// a file with no such line cannot hold a comment and never needs opening. On a
+// repository carrying a node_modules directory that is the difference between
+// reading ~1,450 markdown files and reading the handful that actually have
+// comments in them.
+//
+// The pattern only has to be a filter — anything it lets through is parsed
+// properly afterwards by parseStoryFile, which is the authority on what counts.
+const THREAD_LINE = '<!--[ \t]*thread[ \t]'
+
 export async function scanThreads(root) {
+  const matches = await search.filesMatching(root, THREAD_LINE, {
+    globs: MARKDOWN_EXTS.map((ext) => `*${ext}`),
+  })
+  const ids = matches ?? (await allMarkdownFilesByWalk(root))
+
+  const files = await mapLimit(ids, (id) => readFile_(root, id))
   const out = []
+  for (const file of files) {
+    if (!file) continue
+    for (const t of file.threads || []) out.push(enrichThread(t, file))
+  }
+  return out
+}
+
+// The pre-ripgrep behaviour, kept for a machine that won't run the bundled
+// binary. Reads every directory in the workspace to find the markdown in it.
+async function allMarkdownFilesByWalk(root) {
+  const ids = []
   async function walk(parentId_) {
-    const names = await listMdFiles(parentId_ ? resolveSafe(root, parentId_) : path.resolve(root))
-    for (const name of names) {
-      const file = await readFile_(root, joinId(parentId_, name))
-      if (!file) continue
-      for (const t of file.threads || []) out.push(enrichThread(t, file))
-    }
-    for (const dir of await listDirs(parentId_ ? resolveSafe(root, parentId_) : path.resolve(root))) {
-      await walk(joinId(parentId_, dir))
-    }
+    const abs = parentId_ ? resolveSafe(root, parentId_) : path.resolve(root)
+    for (const name of await listMdFiles(abs)) ids.push(joinId(parentId_, name))
+    for (const dir of await listDirs(abs)) await walk(joinId(parentId_, dir))
   }
   await walk(null)
-  return out
+  return ids
 }
 
 // ---- move (drag a folder/file into a different parent) -----------------------
@@ -554,7 +810,8 @@ export async function moveNode(root, nodeType, id, newParentId) {
   await fs.mkdir(newParentAbs, { recursive: true })
 
   if (nodeType === 'file') {
-    const filename = await uniqueName(newParentAbs, path.basename(abs, '.md'), { isFile: true })
+    const ext = rawExtOf(abs)
+    const filename = await uniqueName(newParentAbs, path.basename(abs, ext), { ext })
     const newId = joinId(newParentId, filename)
     await fs.rename(abs, resolveSafe(root, newId))
     return getFile(root, newId)
@@ -576,8 +833,8 @@ export async function duplicateNode(root, nodeType, id) {
   const pid = parentId(id)
 
   if (nodeType === 'file') {
-    const base = path.basename(abs, '.md')
-    const filename = await uniqueName(parentAbs, `${base} (copy)`, { isFile: true })
+    const ext = rawExtOf(abs)
+    const filename = await uniqueName(parentAbs, `${path.basename(abs, ext)} (copy)`, { ext })
     const newId = joinId(pid, filename)
     await fs.copyFile(abs, resolveSafe(root, newId))
     return getFile(root, newId)
@@ -596,21 +853,127 @@ export async function duplicateNode(root, nodeType, id) {
 
 // Recurse to arbitrary depth. Each node's `children` array holds subfolders
 // first (alphabetical), then files (alphabetical) — folders carry their own
-// `children`, files carry `cases`.
+// `children`, files carry a `kind`.
+//
+// Cases deliberately do NOT travel with the tree. Only the open story's cases
+// are ever read, so attaching them here meant parsing every story file in the
+// workspace a second time to serve one file's worth — the dominant cost of a
+// tree fetch in a large repo. The client fetches them per selection through
+// listCases instead.
 async function buildChildren(root, parentId_) {
   const folders = await listFolders(root, parentId_)
-  const folderNodes = await Promise.all(
-    folders.map(async (folder) => ({ ...folder, type: 'folder', children: await buildChildren(root, folder.id) })),
-  )
+  const folderNodes = await mapLimit(folders, async (folder) => ({
+    ...folder,
+    type: 'folder',
+    children: await buildChildren(root, folder.id),
+  }))
 
   const files = await listFiles(root, parentId_)
-  const fileNodes = await Promise.all(
-    files.map(async (file) => ({ ...file, type: 'file', cases: await listCases(root, file.id) })),
-  )
+  const fileNodes = files.map((file) => ({ ...file, type: 'file' }))
 
   return [...folderNodes, ...fileNodes]
 }
 
 export async function buildTree(root) {
   return buildChildren(root, null)
+}
+
+// ---- search ------------------------------------------------------------------
+
+// How many results are worth reading properly. Ranking happens on paths alone
+// (free); only the winners are opened to learn their `kind`, which is what the
+// result row's glyph and the click's destination need.
+const SEARCH_LIMIT = 50
+
+// Rank a candidate path against a lowercased query. Lower is better; null means
+// no match at all.
+//
+// A hit in the filename beats a hit anywhere else in the path, because someone
+// typing 'login' wants Login.md and not the eleven files inside a folder that
+// happens to be called Login. Within each group, an earlier match beats a later
+// one and a shorter path beats a longer one — so the file itself outranks its
+// deeply nested namesake.
+function searchRank(id, query) {
+  const lower = id.toLowerCase()
+  const slash = lower.lastIndexOf('/')
+  const base = slash === -1 ? lower : lower.slice(slash + 1)
+
+  const inBase = base.indexOf(query)
+  if (inBase !== -1) return inBase + lower.length / 1000
+  const inPath = lower.indexOf(query)
+  if (inPath !== -1) return 1000 + inPath + lower.length / 1000
+  return null
+}
+
+// Everything the tree would show, as ids, for a workspace ripgrep can't search.
+// Deliberately the slow path: it exists so the search box still answers on a
+// machine that won't run the bundled binary, not because it's a good idea.
+async function allWorkspaceFilesByWalk(root, cap = 20000) {
+  const out = []
+  async function walk(parentId_) {
+    if (out.length >= cap) return
+    const abs = parentId_ ? resolveSafe(root, parentId_) : path.resolve(root)
+    for (const name of await listWorkspaceFiles(abs)) out.push(joinId(parentId_, name))
+    for (const dir of await listDirs(abs)) {
+      if (out.length >= cap) return
+      await walk(joinId(parentId_, dir))
+    }
+  }
+  await walk(null)
+  return out
+}
+
+// Files whose path matches `query`, best first, described the way a tree node
+// is — so the sidebar can render a result row and open it with the same code
+// that handles a row in the tree.
+//
+// Matching is on the path, not on content: this answers "where is the file I
+// mean", which is the question a collapsed tree creates. Content search is a
+// different feature and would want its own result shape (line numbers, an
+// excerpt), so it isn't smuggled in here.
+export async function searchFiles(root, query, { limit = SEARCH_LIMIT } = {}) {
+  const q = String(query || '').trim().toLowerCase()
+  if (!q) return []
+
+  // No extension filter: the tree lists every file, so search has to find every
+  // file. What can't be opened still needs to be findable — a user looking for
+  // 'budget.xlsx' wants to be told where it is.
+  const ids = (await search.allFiles(root)) ?? (await allWorkspaceFilesByWalk(root))
+
+  const ranked = []
+  for (const id of ids) {
+    const rank = searchRank(id, q)
+    if (rank !== null) ranked.push([rank, id])
+  }
+  ranked.sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1]))
+
+  // Only now is anything opened — `kind` can't be known from a path, and
+  // reading every candidate to rank it would defeat the point.
+  const winners = ranked.slice(0, limit).map(([, id]) => id)
+  const nodes = await mapLimit(winners, (id) => readFile_(root, id))
+  return nodes.filter(Boolean).map((file) => ({ ...stripDetail(file), type: 'file' }))
+}
+
+// ---- one level (what the app actually fetches) --------------------------------
+
+// The folders directly under `parentId_` (alphabetical) followed by its files
+// (alphabetical) — one level, no descent. A folder's contents are read when
+// the user expands it and not before, which is the difference between opening
+// a large repository instantly and walking every directory in it first.
+//
+// A folder carries `has_children` instead of its children: the sidebar only
+// needs to know whether to draw an expand arrow, and that costs one directory
+// read rather than a recursive descent.
+export async function listChildren(root, parentId_) {
+  const folders = await listFolders(root, parentId_)
+  const folderNodes = await mapLimit(folders, async (folder) => ({
+    ...folder,
+    type: 'folder',
+    has_children: await hasVisibleChildren(resolveSafe(root, folder.id)),
+  }))
+
+  const files = await listFiles(root, parentId_)
+  const fileNodes = files.map((file) => ({ ...file, type: 'file' }))
+
+  return [...folderNodes, ...fileNodes]
 }

@@ -1,5 +1,7 @@
-// The board: sidebar tree + story panel, and the owner of all board-local
-// state (selection, collapsed folders, active case tab, pending confirmation).
+// The board: owner of all board-local state (selection, active case tab,
+// pending confirmation) and of what each of the four panels shows. Folder
+// expansion is NOT board state: it decides which levels get fetched, so it
+// lives with the tree itself in useThreadlineSync. The panels themselves live in `src/panels`, arranged by PanelLayout.
 // Persistence goes out through the `actions` object from useThreadlineSync.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -15,25 +17,20 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { buttonVariants } from '@/components/ui/button'
-import { ResizableGroup, ResizableHandle, ResizablePanel } from '@/components/ui/resizable'
-import Sidebar from '@/board/Sidebar'
-import StoryPanel, { caseLabel } from '@/board/StoryPanel'
-import CommentsPanel from '@/board/CommentsPanel'
+import PanelLayout from '@/panels/PanelLayout'
+import SidebarPanel from '@/panels/SidebarPanel'
+import StoryPanel, { caseLabel } from '@/panels/StoryPanel'
+import CommentsPanel from '@/panels/CommentsPanel'
+import DocPanel from '@/panels/DocPanel'
+import EditorBar from '@/panels/EditorBar'
+import ImagePanel from '@/panels/ImagePanel'
+import TextPanel from '@/panels/TextPanel'
 import { useComments } from '@/board/useComments'
+import { workspaceIdOf, workspacePathOf } from '@/lib/paths'
 import { useWorkspaceSync } from '@/board/useWorkspaceSync'
 
-const STORAGE_KEY_COLLAPSED = 'threadline_collapsed_nodes'
 const STORAGE_KEY_SIDEBAR_HIDDEN = 'threadline_sidebar_hidden'
 const STORAGE_KEY_COMMENTS_OPEN = 'threadline_comments_open'
-
-function loadCollapsedNodes() {
-  try {
-    const arr = JSON.parse(localStorage.getItem(STORAGE_KEY_COLLAPSED))
-    return Array.isArray(arr) ? new Set(arr) : new Set()
-  } catch {
-    return new Set()
-  }
-}
 
 function loadSidebarHidden() {
   try {
@@ -51,36 +48,22 @@ function loadCommentsOpen() {
   }
 }
 
-// The tree is a recursive children array of folder/file nodes (folders first,
-// then files, both alphabetical, at every level).
-function findFile(nodes, id) {
-  for (const node of nodes || []) {
-    if (node.type === 'file' && node.id === id) return node
-    if (node.type === 'folder') {
-      const found = findFile(node.children, id)
-      if (found) return found
-    }
-  }
-  return null
+// The auto-selection on open, so the story column has something in it. A doc
+// or a page is skipped: opening one would put the workspace's first README in
+// the editor while the story panel — the thing this app is for — never appears.
+//
+// Only the root level is considered. Descending to find a story would mean
+// reading every folder in the workspace before the window could be drawn,
+// which is exactly what the lazy tree exists to avoid — so a workspace whose
+// stories all live in subfolders opens with nothing selected, as an editor
+// does.
+function findFirstStory(nodes) {
+  return (nodes || []).find((node) => node.type === 'file' && node.kind === 'story') || null
 }
 
-function findFirstFile(nodes) {
-  for (const node of nodes || []) {
-    if (node.type === 'file') return node
-    if (node.type === 'folder') {
-      const found = findFirstFile(node.children)
-      if (found) return found
-    }
-  }
-  return null
-}
-
-function withReorderedCases(nodes, storyId, newCases) {
-  return (nodes || []).map((node) => {
-    if (node.type === 'file') return node.id === storyId ? { ...node, cases: newCases } : node
-    return { ...node, children: withReorderedCases(node.children, storyId, newCases) }
-  })
-}
+// Every kind the editor column can show. A kind absent from here either goes
+// somewhere else (pdf -> the browser) or can't be opened at all.
+const TAB_KINDS = ['story', 'doc', 'image', 'text', 'page']
 
 function dialogCopy(pending) {
   if (!pending) return { title: '', body: '' }
@@ -116,10 +99,28 @@ function dialogCopy(pending) {
 }
 
 export default function Board({
-  tree,
-  setTree,
+  rootNodes,
+  childrenOf,
+  nodesById,
+  expandedIds,
+  loadingIds,
+  onToggleNode,
+  onExpandNode,
+  onRevealNode,
+  searchQuery,
+  onSearchQueryChange,
+  searchResults,
+  searching,
+  cases,
+  setCases,
   actions,
   root,
+  tabs,
+  activeTab,
+  onOpenTab,
+  onActivateTab,
+  onCloseTab,
+  onFileGone,
   selectedStoryId,
   onSelectStory,
   workspaceName,
@@ -127,13 +128,19 @@ export default function Board({
   onUserEmailChange,
   onOpenWorkspace,
   onOpenLink,
+  browser,
   browserOpen,
   onToggleBrowser,
+  onBrowserOpenChange,
 }) {
   const [activeCaseIndex, setActiveCaseIndex] = useState(0)
-  const [collapsedNodes, setCollapsedNodes] = useState(loadCollapsedNodes)
+  // A case name arrived with a story selection (from a comment) before that
+  // story's cases had loaded — held here until they do. See selectStory.
+  const [pendingCaseName, setPendingCaseName] = useState(null)
   const [sidebarHidden, setSidebarHidden] = useState(loadSidebarHidden)
   const [pendingAction, setPendingAction] = useState(null)
+  // A file the column has no way to show — held so the dialog can name it.
+  const [unopenable, setUnopenable] = useState(null)
 
   const [commentsOpen, setCommentsOpen] = useState(loadCommentsOpen)
   const [activeThreadId, setActiveThreadId] = useState(null)
@@ -147,53 +154,37 @@ export default function Board({
     users,
     error: commentError,
     actions: commentActions,
-    setMentionsOnly,
+    mentionCount,
   } = useComments({ root, storyId: selectedStoryId, userEmail })
 
   const workspaceSync = useWorkspaceSync({ root })
 
-  const selectedStory = useMemo(
-    () => (selectedStoryId ? findFile(tree, selectedStoryId) : null),
-    [tree, selectedStoryId],
-  )
+  // A tree node carries metadata only — its cases come from their own fetch
+  // (see useThreadlineSync). Re-attached here so every consumer below still
+  // sees one whole story rather than two halves.
+  const selectedStory = useMemo(() => {
+    if (!selectedStoryId) return null
+    const node = nodesById[selectedStoryId]
+    return node ? { ...node, cases } : null
+  }, [nodesById, selectedStoryId, cases])
 
   // Auto-select the top story once data arrives and nothing is selected.
   useEffect(() => {
     if (selectedStoryId) return
-    const first = findFirstFile(tree)
+    const first = findFirstStory(rootNodes)
     if (first) {
       onSelectStory(first.id)
       setActiveCaseIndex(0)
     }
-  }, [tree, selectedStoryId, onSelectStory])
+  }, [rootNodes, selectedStoryId, onSelectStory])
 
-  const persistCollapsed = useCallback((next) => {
-    setCollapsedNodes(next)
-    try {
-      localStorage.setItem(STORAGE_KEY_COLLAPSED, JSON.stringify([...next]))
-    } catch {
-      /* noop */
-    }
-  }, [])
-
-  // Adding to or moving into a collapsed folder expands it, so the user can
-  // see where the node landed.
-  const expandNode = useCallback(
-    (nodeId) => {
-      if (!nodeId || !collapsedNodes.has(nodeId)) return
-      const next = new Set(collapsedNodes)
-      next.delete(nodeId)
-      persistCollapsed(next)
-    },
-    [collapsedNodes, persistCollapsed],
-  )
-
-  function toggleNode(nodeId) {
-    const next = new Set(collapsedNodes)
-    if (next.has(nodeId)) next.delete(nodeId)
-    else next.add(nodeId)
-    persistCollapsed(next)
-  }
+  // Place the tab a comment pointed at, once its story's cases have arrived.
+  useEffect(() => {
+    if (!pendingCaseName || cases.length === 0) return
+    const index = cases.findIndex((c, i) => caseLabel(c, i) === pendingCaseName)
+    if (index !== -1) setActiveCaseIndex(index)
+    setPendingCaseName(null)
+  }, [cases, pendingCaseName])
 
   function toggleComments() {
     setCommentsOpen((open) => {
@@ -258,22 +249,70 @@ export default function Board({
   // highlight.
   function selectStory(storyId, caseName) {
     onSelectStory(storyId)
-    const cases = caseName ? findFile(tree, storyId)?.cases || [] : []
-    const index = cases.findIndex((c, i) => caseLabel(c, i) === caseName)
-    setActiveCaseIndex(index === -1 ? 0 : index)
+    // The new story's cases haven't been fetched yet, so the tab holding this
+    // comment can't be resolved here — hold the name for the effect below.
+    setPendingCaseName(caseName || null)
+    setActiveCaseIndex(0)
     // A held selection belongs to the case we're leaving, and a focused thread
     // to the story we're leaving — neither means anything in the new one.
     setPendingAnchor(null)
     setActiveThreadId(null)
   }
 
+  // Clicking a file, wherever it was clicked — the tree or a search result.
+  // What happens is decided by its `kind`, set by the repo from the file itself
+  // (see repo.js) and not by its extension here, because a `.md` can be either
+  // a story or a plain document and only its contents say which.
+  //
+  //   story          a tab: the story editor
+  //   doc            a tab: the markdown editor
+  //   image          a tab: the image, shown as-is
+  //   text / page    a tab: a plain-text editor. HTML is source to edit as much
+  //                  as a page to look at, so it lands here with a Preview
+  //                  button rather than going straight to the browser
+  //   pdf            the browser panel, no tab — Chromium already renders those
+  //   other          nothing here can open it, so say so
+  function openFile(node) {
+    if (!node) return
+    const path = workspacePathOf(root, node.id)
+
+    if (node.kind === 'pdf') {
+      onOpenLink(path)
+      return
+    }
+    if (TAB_KINDS.includes(node.kind)) {
+      onOpenTab({ path, id: node.id, kind: node.kind, title: node.title, ext: node.ext })
+      // A story's case tabs and any held selection belong to the story we came
+      // from, not the one arriving.
+      if (node.kind === 'story') {
+        setPendingCaseName(null)
+        setActiveCaseIndex(0)
+        setPendingAnchor(null)
+        setActiveThreadId(null)
+      }
+      return
+    }
+    setUnopenable({ title: node.title, ext: node.ext })
+  }
+
+  // A search result opens exactly like a tree row — but the folders it lives
+  // in may never have been loaded, so it is revealed first and the search box
+  // handed back to the tree. Otherwise the user lands on a file with no idea
+  // where it sits.
+  function selectSearchResult(node) {
+    if (!node) return
+    onRevealNode(node.id)
+    onSearchQueryChange('')
+    openFile(node)
+  }
+
   function addNode({ addType, parentId }) {
-    expandNode(parentId)
+    onExpandNode(parentId)
     actions.addNode({ nodeType: addType, parentId })
   }
 
   function moveNode({ nodeType, nodeId, newParentId }) {
-    expandNode(newParentId)
+    onExpandNode(newParentId)
     actions.moveNode({ nodeType, nodeId, newParentId })
   }
 
@@ -315,7 +354,7 @@ export default function Board({
     const newActiveIndex = list.findIndex((c) => c.id === activeId)
     if (newActiveIndex === -1) return
 
-    setTree((current) => withReorderedCases(current, selectedStory.id, list))
+    setCases(list)
     setActiveCaseIndex(newActiveIndex)
     actions.reorderCase({ storyId: selectedStory.id, orderedIds: list.map((c) => c.id) })
   }
@@ -339,19 +378,74 @@ export default function Board({
       } else {
         actions.deleteNode({ nodeType: p.nodeType, nodeId: p.nodeId })
       }
-      if (selectedStoryId === p.nodeId) onSelectStory(null)
+      // A case is part of a file that still exists; a file or folder is not, so
+      // any tab showing it (or anything inside it) has nothing left to show.
+      if (p.nodeType !== 'case') onFileGone(p.nodeId)
     }
     setPendingAction(null)
   }
 
   const copy = dialogCopy(pendingAction)
 
+  // The row the sidebar highlights: whatever the editor column is currently
+  // showing. Derived rather than stored, so it can't drift from the panel — a
+  // rename changes a file's id, and a remembered id would keep pointing at the
+  // path the file used to have.
+  //
+  // A doc opened from a story LINK can live outside the workspace, in which
+  // case there is no row to highlight — the sidebar simply shows nothing
+  // selected, which is the truth.
+  const selectedNodeId = useMemo(
+    () => activeTab?.id || (activeTab ? workspaceIdOf(root, activeTab.path) : '') || '',
+    [activeTab, root],
+  )
+
   const clearPendingAnchor = useCallback(() => setPendingAnchor(null), [])
 
-  // The toggle's badge: open threads on the story being edited.
-  const openCommentCount = useMemo(
-    () => storyThreads.filter((t) => t.status !== 'resolved').length,
-    [storyThreads],
+  // The toggle's badge: open comments across the workspace that mention you.
+  // Workspace-wide rather than per-story on purpose — a mention on a story you
+  // don't happen to have open is exactly the one you need telling about.
+
+  const sidebarPanel = (
+    <SidebarPanel
+      rootNodes={rootNodes}
+      selectedNodeId={selectedNodeId}
+      expandedIds={expandedIds}
+      loadingIds={loadingIds}
+      childrenOf={childrenOf}
+      searchQuery={searchQuery}
+      onSearchQueryChange={onSearchQueryChange}
+      searchResults={searchResults}
+      searching={searching}
+      onSelectSearchResult={selectSearchResult}
+      workspaceName={workspaceName}
+      userEmail={userEmail}
+      onUserEmailChange={onUserEmailChange}
+      sync={{
+        status: workspaceSync.status,
+        lastSync: workspaceSync.lastSync,
+        syncing: workspaceSync.syncing,
+        error: workspaceSync.error,
+        detail: workspaceSync.detail,
+        onSync: workspaceSync.sync,
+        accounts: workspaceSync.accounts,
+        pushUser: workspaceSync.pushUser,
+        chooseAccount: workspaceSync.chooseAccount,
+        checkingAccounts: workspaceSync.checkingAccounts,
+      }}
+      onOpenWorkspace={onOpenWorkspace}
+      onSelectFile={openFile}
+      onToggleNode={onToggleNode}
+      onAddNode={addNode}
+      onRenameNode={actions.renameNode}
+      onDuplicateRequest={({ nodeType, nodeId, name }) =>
+        setPendingAction({ action: 'duplicate', nodeType, nodeId, name })
+      }
+      onDeleteRequest={({ nodeType, nodeId, name }) =>
+        setPendingAction({ action: 'delete', nodeType, nodeId, name })
+      }
+      onMoveNode={moveNode}
+    />
   )
 
   const storyPanel = (
@@ -359,7 +453,6 @@ export default function Board({
       story={selectedStory}
       root={root}
       activeCaseIndex={activeCaseIndex}
-      onToggleSidebar={toggleSidebar}
       onUpdateStory={actions.updateStory}
       onUpdateCase={actions.updateCase}
       onAddCase={actions.addCase}
@@ -374,17 +467,54 @@ export default function Board({
       }
       onStoryDeleteRequest={requestStoryDelete}
       onOpenLink={onOpenLink}
-      browserOpen={browserOpen}
-      onToggleBrowser={onToggleBrowser}
       threads={storyThreads}
       activeThreadId={activeThreadId}
-      openCommentCount={openCommentCount}
-      commentsOpen={commentsOpen}
-      onToggleComments={toggleComments}
       onRequestComment={requestComment}
       onActivateThread={setActiveThreadId}
       onOpenThread={openThread}
     />
+  )
+
+  // A markdown document — a PRD, a TRD, a README. No cases, criticality or
+  // comment threads for the story chrome to act on.
+  const docPanel = (
+    <DocPanel
+      filePath={activeTab?.path || ''}
+      root={root}
+    />
+  )
+
+  // The editor column: one general bar, then whichever panel the active tab
+  // needs under it. Nothing below the bar knows about tabs, and the bar's
+  // controls are there whatever kind of file is open — including none.
+  const editorColumn = (
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+      <EditorBar
+        tabs={tabs}
+        activeKey={activeTab?.key || null}
+        onActivateTab={onActivateTab}
+        onCloseTab={onCloseTab}
+        onToggleSidebar={toggleSidebar}
+        commentsOpen={commentsOpen}
+        onToggleComments={toggleComments}
+        openCommentCount={mentionCount}
+        browserOpen={browserOpen}
+        onToggleBrowser={onToggleBrowser}
+      />
+      {activeTab?.kind === 'story' ? (
+        storyPanel
+      ) : activeTab?.kind === 'doc' ? (
+        docPanel
+      ) : activeTab?.kind === 'image' ? (
+        <ImagePanel filePath={activeTab.path} title={activeTab.title} />
+      ) : activeTab?.kind === 'text' || activeTab?.kind === 'page' ? (
+        <TextPanel filePath={activeTab.path} isHtml={activeTab.kind === 'page'} onPreview={onOpenLink} />
+      ) : (
+        <div className="text-muted-foreground flex flex-1 items-center justify-center px-6 text-center text-[13px]">
+          Open a file from the sidebar, or search for one.
+        </div>
+      )}
+    </div>
   )
 
   const commentsPanel = (
@@ -402,71 +532,20 @@ export default function Board({
       onSelectStory={selectStory}
       onActivateThread={setActiveThreadId}
       onClearPendingAnchor={clearPendingAnchor}
-      onSetMentionsOnly={setMentionsOnly}
       actions={commentActions}
     />
   )
 
   return (
-    <div className="bg-background flex h-full flex-col overflow-hidden">
-      {/* One group with conditional members rather than three hand-written
-          layouts: the tree and the comment panel each toggle independently, so
-          the four combinations would otherwise be four copies of this tree.
-          The layout is keyed by which panels are showing, so hiding one
-          doesn't leave the remembered sizes of a different arrangement behind. */}
-      <ResizableGroup
-        storageId={`threadline_board_layout_${sidebarHidden ? 'notree' : 'tree'}_${commentsOpen ? 'comments' : 'nocomments'}`}
-        className="min-h-0 flex-1"
-      >
-        {!sidebarHidden && (
-          <ResizablePanel id="tree" defaultSize="34%" minSize="18%" maxSize="60%">
-            <Sidebar
-              tree={tree}
-              selectedStoryId={selectedStoryId || ''}
-              collapsedNodes={collapsedNodes}
-              workspaceName={workspaceName}
-              userEmail={userEmail}
-              onUserEmailChange={onUserEmailChange}
-              sync={{
-                status: workspaceSync.status,
-                lastSync: workspaceSync.lastSync,
-                syncing: workspaceSync.syncing,
-                error: workspaceSync.error,
-                detail: workspaceSync.detail,
-                onSync: workspaceSync.sync,
-                accounts: workspaceSync.accounts,
-                pushUser: workspaceSync.pushUser,
-                chooseAccount: workspaceSync.chooseAccount,
-                checkingAccounts: workspaceSync.checkingAccounts,
-              }}
-              onOpenWorkspace={onOpenWorkspace}
-              onSelectStory={selectStory}
-              onToggleNode={toggleNode}
-              onAddNode={addNode}
-              onRenameNode={actions.renameNode}
-              onDuplicateRequest={({ nodeType, nodeId, name }) =>
-                setPendingAction({ action: 'duplicate', nodeType, nodeId, name })
-              }
-              onDeleteRequest={({ nodeType, nodeId, name }) =>
-                setPendingAction({ action: 'delete', nodeType, nodeId, name })
-              }
-              onMoveNode={moveNode}
-            />
-          </ResizablePanel>
-        )}
-        {!sidebarHidden && <ResizableHandle />}
-
-        <ResizablePanel id="story" defaultSize={sidebarHidden ? '100%' : '66%'} minSize="30%">
-          {storyPanel}
-        </ResizablePanel>
-
-        {commentsOpen && <ResizableHandle />}
-        {commentsOpen && (
-          <ResizablePanel id="comments" defaultSize="34%" minSize="20%" maxSize="60%">
-            {commentsPanel}
-          </ResizablePanel>
-        )}
-      </ResizableGroup>
+    <div className="bg-background flex h-screen flex-col overflow-hidden">
+      <PanelLayout
+        sidebar={sidebarHidden ? null : sidebarPanel}
+        story={editorColumn}
+        comments={commentsOpen ? commentsPanel : null}
+        browser={browser}
+        browserOpen={browserOpen}
+        onBrowserOpenChange={onBrowserOpenChange}
+      />
 
       <AlertDialog open={!!pendingAction} onOpenChange={(open) => !open && setPendingAction(null)}>
         <AlertDialogContent>
@@ -482,6 +561,25 @@ export default function Board({
             >
               {pendingAction?.action === 'duplicate' ? 'Duplicate' : 'Delete'}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* A file the tree lists but this app has no editor or viewer for. The
+          tree shows every file on purpose — hiding them would make it lie
+          about what's on disk — so this is the honest end of that promise. */}
+      <AlertDialog open={!!unopenable} onOpenChange={(open) => !open && setUnopenable(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Can’t open this file here</AlertDialogTitle>
+            <AlertDialogDescription>
+              Threadline opens stories, markdown, plain text, images, web pages and PDFs.
+              {unopenable?.ext ? ` A .${unopenable.ext} file` : ' This file'} needs an app that understands it — open{' '}
+              {unopenable?.title ? `“${unopenable.title}”` : 'it'} from your file manager instead.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setUnopenable(null)}>Got it</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

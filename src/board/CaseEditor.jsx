@@ -19,33 +19,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MessageSquarePlus } from 'lucide-react'
-import {
-  MDXEditor,
-  codeBlockPlugin,
-  codeMirrorPlugin,
-  headingsPlugin,
-  linkDialogPlugin,
-  linkPlugin,
-  listsPlugin,
-  markdownShortcutPlugin,
-  quotePlugin,
-  tablePlugin,
-  thematicBreakPlugin,
-  toolbarPlugin,
-  BlockTypeSelect,
-  BoldItalicUnderlineToggles,
-  CodeToggle,
-  CreateLink,
-  InsertCodeBlock,
-  InsertTable,
-  InsertThematicBreak,
-  ListsToggle,
-  Separator as MdxSeparator,
-  UndoRedo,
-} from '@mdxeditor/editor'
+import { MDXEditor } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
 
-import { codeMirrorTheme } from '@/board/codeMirrorTheme'
+import { markdownPlugins } from '@/board/mdxPlugins'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -90,7 +67,27 @@ export default function CaseEditor({
     editorRef.current?.setMarkdown(value || '')
   }, [value])
 
-  useEffect(() => () => clearTimeout(debounceRef.current), [])
+  // What a pending save is FOR. Held apart from the timer so the write can
+  // still go out after the timer is gone — which is what switching case tabs,
+  // switching stories, or closing the file's tab does.
+  const pendingRef = useRef(null)
+
+  const flush = useCallback(() => {
+    clearTimeout(debounceRef.current)
+    const pending = pendingRef.current
+    pendingRef.current = null
+    if (pending) onChangeBody(pending)
+  }, [onChangeBody])
+
+  const flushRef = useRef(flush)
+  useEffect(() => {
+    flushRef.current = flush
+  }, [flush])
+
+  // On the way out of a case, and on the way out entirely: a debounce that is
+  // merely cancelled loses whatever was typed in its last half-second, and
+  // closing a tab right after typing is exactly when that happens.
+  useEffect(() => () => flushRef.current(), [caseId])
 
   // Only the anchored, unresolved threads affect the highlights — rebuilding
   // on every reply or status flip would be churn for no visible change.
@@ -154,8 +151,9 @@ export default function CaseEditor({
     lastValueRef.current = markdown
     // Wait for a pause in typing before saving, so fast typing doesn't fire a
     // PUT + tree refetch per keystroke.
+    pendingRef.current = { caseId, body: markdown }
     clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => onChangeBody({ caseId, body: markdown }), DEBOUNCE_MS)
+    debounceRef.current = setTimeout(() => flushRef.current(), DEBOUNCE_MS)
   }
 
   // The context menu only ever holds "Comment", so it opens only when there's
@@ -250,44 +248,7 @@ export default function CaseEditor({
             onChange={onChange}
             contentEditableClassName="threadline-prose"
             className="flex min-h-0 flex-1 flex-col"
-            plugins={[
-              headingsPlugin(),
-              listsPlugin(),
-              quotePlugin(),
-              thematicBreakPlugin(),
-              linkPlugin(),
-              linkDialogPlugin(),
-              tablePlugin(),
-              codeBlockPlugin({ defaultCodeBlockLanguage: 'text' }),
-              codeMirrorPlugin({
-                codeBlockLanguages: { text: 'Text', js: 'JavaScript', java: 'Java', json: 'JSON' },
-                // Overrides the light-only theme MDXEditor bundles — see codeMirrorTheme.js.
-                codeMirrorExtensions: codeMirrorTheme,
-              }),
-              markdownShortcutPlugin(),
-              commentMarksPlugin({ onEditor: setLexicalEditor }),
-              toolbarPlugin({
-                toolbarContents: () => (
-                  <>
-                    {/* Grouped history / block / inline / list / insert, one
-                        separator per group boundary. */}
-                    <UndoRedo />
-                    <MdxSeparator />
-                    <BlockTypeSelect />
-                    <MdxSeparator />
-                    <BoldItalicUnderlineToggles />
-                    <CodeToggle />
-                    <MdxSeparator />
-                    <ListsToggle />
-                    <MdxSeparator />
-                    <CreateLink />
-                    <InsertCodeBlock />
-                    <InsertTable />
-                    <InsertThematicBreak />
-                  </>
-                ),
-              }),
-            ]}
+            plugins={markdownPlugins([commentMarksPlugin({ onEditor: setLexicalEditor })])}
           />
         </div>
       </ContextMenuTrigger>

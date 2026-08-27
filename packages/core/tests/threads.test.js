@@ -230,7 +230,7 @@ test('threads are absent from file and tree payloads', async () => {
     assert.equal('threads' in (await getFile(root, story.id)), false)
     const tree = await buildTree(root)
     assert.equal('threads' in tree[0], false)
-    assert.ok(Array.isArray(tree[0].cases), 'cases still travel with the tree')
+    assert.equal('cases' in tree[0], false, 'cases do not travel with the tree either')
   })
 })
 
