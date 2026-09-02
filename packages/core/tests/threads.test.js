@@ -60,7 +60,7 @@ test('createThread writes an anchored thread and returns an enriched row', async
     // ...and it's really on disk, in the comments section, as readable prose.
     const raw = await readFile(path.join(root, 'Login.s.md'), 'utf8')
     assert.match(raw, /<!-- comments -->/)
-    assert.match(raw, /<!-- thread id=t_[0-9a-f]{12} case="Happy path" status=open/)
+    assert.match(raw, /<!-- thread id=t_[0-9a-f]{12} tab="Happy path" status=open/)
     assert.match(raw, /^> log in$/m)
     assert.match(raw, /- \*\*jane@corp\.test\*\*/)
   })

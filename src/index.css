@@ -33,6 +33,24 @@
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
 
+  /* Links, and NOT --primary. shadcn's primary is the near-black button fill
+   * in light and near-white in dark, so a link painted with it is the body
+   * text colour in both — the underline ends up carrying the whole signal.
+   * Blue is the one hue a reader already reads as "link" without being told.
+   * Mirrored in `.dark` below: unlike the tag palette these are not colours
+   * anyone picked by name, they are the same role on two grounds, and the
+   * light value goes muddy on the dark one. */
+  --link: oklch(0.52 0.17 258);
+
+  /* The link blue used INSIDE a badge, and deliberately not `--link` itself.
+   * A badge paints an absolute light fill under the text regardless of theme,
+   * so on dark mode the ground beneath a link stops being dark — and `--link`,
+   * which is lifted to near-cyan down there precisely to survive a dark ground,
+   * goes washed-out on it. This is the same blue a reader sees on the light
+   * theme: one value, correct on every fill in the palette because every fill
+   * is light. NOT mirrored in `.dark` — that is the whole point. */
+  --link-on-tag: oklch(0.5 0.18 258);
+
   /* App density tokens — shadcn's set covers colour and radius only, and the
    * board repeats these two structural values in every tree/tab component. */
   --tree-row-h: 1.625rem;
@@ -60,22 +78,23 @@
 
   /* Link-tag palette. Same reasoning as the syntax colours above: the user is
    * assigning hue as meaning ("purple is design, green is data"), which the
-   * semantic tokens cannot express. Twelve colours — three neutrals, then nine
-   * hues in ascending order — enough to tell a story's links apart at a glance,
-   * few enough to pick from without a colour picker.
+   * semantic tokens cannot express. Nine colours — grey, then eight hues in
+   * ascending order — enough to tell a story's links apart at a glance, few
+   * enough to pick from without a colour picker.
    *
    * Deliberately NOT mirrored in `.dark`: these are absolute colours the user
-   * picked by name, and the set contains both white and black, so a per-theme
-   * inversion would make two of the twelve swap identities. Each colour is a
-   * FILL with its own ink pinned to it instead — dark ink on the light fills,
-   * light ink on the two dark ones — so a chip reads the same in both themes.
-   * Consumed by board/linkTags.js. */
-  --tag-white: oklch(1 0 0);
-  --tag-white-ink: oklch(0.25 0 0);
+   * picked by name, and a named colour that shifts identity when the theme
+   * flips is a worse colour. Each is a FILL with its own ink pinned to it, so a
+   * chip reads the same on either ground.
+   *
+   * Every fill is LIGHT, which is a rule rather than a coincidence: it is what
+   * lets ONE dark ink and ONE dark link-blue serve all nine, with no per-key
+   * exceptions anywhere downstream (see --link-on-tag). White, black and
+   * dark-blue were dropped to keep that rule true — white vanished against the
+   * page, and the two dark fills each needed their own light ink and would have
+   * needed a light link-blue to match. Consumed by board/linkTags.js. */
   --tag-grey: oklch(0.83 0.004 286);
   --tag-grey-ink: oklch(0.25 0 0);
-  --tag-black: oklch(0.32 0.004 286);
-  --tag-black-ink: oklch(0.98 0 0);
 
   --tag-red: oklch(0.85 0.075 27);
   --tag-red-ink: oklch(0.4 0.15 27);
@@ -89,8 +108,6 @@
   --tag-cyan-ink: oklch(0.4 0.09 198);
   --tag-light-blue: oklch(0.87 0.06 235);
   --tag-light-blue-ink: oklch(0.42 0.12 240);
-  --tag-dark-blue: oklch(0.5 0.15 265);
-  --tag-dark-blue-ink: oklch(0.98 0 0);
   --tag-purple: oklch(0.86 0.07 300);
   --tag-purple-ink: oklch(0.42 0.15 300);
   --tag-pink: oklch(0.87 0.07 350);
@@ -117,6 +134,10 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.552 0.016 285.938);
+
+  /* Lifted and desaturated against the dark ground, the same move the syntax
+   * colours below make — the light blue reads as near-navy on dark. */
+  --link: oklch(0.76 0.12 250);
 
   --scrollbar-thumb: oklch(1 0 0 / 22%);
   --scrollbar-thumb-hover: oklch(1 0 0 / 40%);
@@ -164,6 +185,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-link: var(--link);
 
   --spacing-tree-row: var(--tree-row-h);
   --spacing-tree-indent: var(--tree-indent);
@@ -241,11 +263,20 @@
  * same element, and its stylesheet is emitted after ours. At one class each,
  * source order decides and MDXEditor wins. Two classes settle it.
  *
+ * `.mdxeditor-popup-container` carries the same variable map because it is NOT
+ * inside the editor: MDXEditor appends it to <body> (see MDXEditor.js's
+ * EditorRootElement) and gives it `_editorRoot_` WITHOUT the `mdxeditor`
+ * class. Everything portaled into it — the block-type select, the link dialog
+ * — therefore inherits MDXEditor's own light scales and none of the mapping
+ * below unless this selector is listed too. Only the variables are shared; the
+ * editor's flex layout stays on `.mdxeditor` alone.
+ *
  * Toolbar internals have no public class names, only CSS-module hashes
  * (`_toolbarButton_er3ed_239`). Those are matched on the unhashed prefix so a
  * version bump doesn't silently drop the styling.
  * ------------------------------------------------------------------------ */
-.mdxeditor.mdxeditor {
+.mdxeditor.mdxeditor,
+.mdxeditor-popup-container.mdxeditor-popup-container {
   /* Surfaces, from the page ground up through the hover/active states. */
   --basePageBg: var(--background);
   --baseBase: var(--muted);
@@ -281,11 +312,14 @@
 
   --error-color: var(--destructive);
 
+  font-family: var(--font-sans);
+  color: var(--foreground);
+}
+
+.mdxeditor.mdxeditor {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  font-family: var(--font-sans);
-  color: var(--foreground);
 }
 
 .mdxeditor-toolbar[class*='_toolbarRoot_'] {
@@ -386,6 +420,26 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* The block-type dropdown's own surface. MDXEditor highlights a select item
+ * with `--baseBg`, which the map above points at `--background` — the same
+ * colour as the dropdown itself, so hover and the checked row would be
+ * invisible. Both states are named here in our own tokens instead. */
+.mdxeditor-popup-container [class*='_selectItem_'][data-highlighted],
+.mdxeditor-popup-container [class*='_selectItem_'][data-state='checked'],
+.mdxeditor-popup-container [class*='_toolbarNodeKindSelectItem_'][data-highlighted],
+.mdxeditor-popup-container [class*='_toolbarNodeKindSelectItem_'][data-state='checked'] {
+  @apply bg-accent text-accent-foreground;
+}
+
+/* A one-pixel edge so the popup reads as a surface above the editor rather
+ * than a floating block of the same colour. */
+.mdxeditor-popup-container [class*='_selectContainer_'],
+.mdxeditor-popup-container [class*='_toolbarNodeKindSelectContainer_'],
+.mdxeditor-popup-container [class*='_toolbarButtonDropdownContainer_'] {
+  @apply border-border rounded-md border;
+  overflow: hidden;
 }
 
 /* Popups (link dialog, table controls) must clear the board's own dialogs. */
@@ -566,7 +620,7 @@
 }
 
 .threadline-prose a {
-  @apply text-primary underline underline-offset-2;
+  @apply text-link underline underline-offset-2;
 }
 
 .threadline-prose hr {
@@ -583,6 +637,97 @@
 
 .threadline-prose strong {
   @apply font-semibold;
+}
+
+/* Inline badges — `<span class="tag-purple">` in the markdown, one class per
+   palette key (see badges.js). Unlike the comment highlights below, these DO
+   reach the file: they are content the user wrote, not a viewing aid.
+
+   The opposite visual choice to a comment highlight, and deliberately so: a
+   badge IS a container — a pill with an edge, the way a Jira label or a
+   Notion tag reads — where a highlight is ink on the words. That contrast is
+   what lets a badge and a comment sit on the same text and still be told
+   apart. It matches the link chips in the params row exactly (same fill, same
+   ink, same fill-nudged-toward-ink border) because it is the same vocabulary.
+
+   The colours are absolute rather than theme-adaptive — the palette includes
+   white and black — so there is no dark-mode block here, same as :root. */
+.threadline-prose :is(span[class^='tag-'], span[class*=' tag-']) {
+  border-radius: 0.25rem;
+  border: 1px solid;
+  /* Vertical padding without the line-height cost: a badge on a wrapped
+     paragraph must not push its own line taller than its neighbours. */
+  padding: 0.05em 0.35em;
+  margin-inline: 0.05em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* One rule per key. Both custom properties come from the palette map in
+   :root, so a colour is never written twice. */
+.threadline-prose span.tag-grey {
+  background-color: var(--tag-grey);
+  color: var(--tag-grey-ink);
+  border-color: color-mix(in oklab, var(--tag-grey) 78%, var(--tag-grey-ink));
+}
+.threadline-prose span.tag-red {
+  background-color: var(--tag-red);
+  color: var(--tag-red-ink);
+  border-color: color-mix(in oklab, var(--tag-red) 78%, var(--tag-red-ink));
+}
+.threadline-prose span.tag-orange {
+  background-color: var(--tag-orange);
+  color: var(--tag-orange-ink);
+  border-color: color-mix(in oklab, var(--tag-orange) 78%, var(--tag-orange-ink));
+}
+.threadline-prose span.tag-yellow {
+  background-color: var(--tag-yellow);
+  color: var(--tag-yellow-ink);
+  border-color: color-mix(in oklab, var(--tag-yellow) 78%, var(--tag-yellow-ink));
+}
+.threadline-prose span.tag-green {
+  background-color: var(--tag-green);
+  color: var(--tag-green-ink);
+  border-color: color-mix(in oklab, var(--tag-green) 78%, var(--tag-green-ink));
+}
+.threadline-prose span.tag-cyan {
+  background-color: var(--tag-cyan);
+  color: var(--tag-cyan-ink);
+  border-color: color-mix(in oklab, var(--tag-cyan) 78%, var(--tag-cyan-ink));
+}
+.threadline-prose span.tag-light-blue {
+  background-color: var(--tag-light-blue);
+  color: var(--tag-light-blue-ink);
+  border-color: color-mix(in oklab, var(--tag-light-blue) 78%, var(--tag-light-blue-ink));
+}
+.threadline-prose span.tag-purple {
+  background-color: var(--tag-purple);
+  color: var(--tag-purple-ink);
+  border-color: color-mix(in oklab, var(--tag-purple) 78%, var(--tag-purple-ink));
+}
+.threadline-prose span.tag-pink {
+  background-color: var(--tag-pink);
+  color: var(--tag-pink-ink);
+  border-color: color-mix(in oklab, var(--tag-pink) 78%, var(--tag-pink-ink));
+}
+
+/* A link that overlaps a badge stays a LINK. The badge's ink is for the words
+   the user wrote; the blue is the affordance, and swallowing it into the fill
+   colour costs the reader the only cue that the text is clickable — the pill
+   itself is not that cue, since badges without links are the common case.
+   Earlier this went the other way (`color: inherit`), which is what made a
+   link invisible once a badge landed on it.
+       This must sit AFTER the per-key rules above, and that ordering is the
+   actual bug fix for the "depends which I apply first" behaviour. Both of
+   these selectors and the per-key `.threadline-prose span.tag-red` weigh the
+   same (0,2,1), so the later one wins — and with badge-inside-link the per-key
+   rule targets the very same span this rule does. Above the block, the badge
+   ink won and the link vanished; below it, the blue wins in BOTH nestings, so
+   the order the user applied them stops mattering.
+       `--link-on-tag` rather than `--link`: see the note at its definition. */
+.threadline-prose :is(span[class^='tag-'], span[class*=' tag-']) a,
+.threadline-prose a :is(span[class^='tag-'], span[class*=' tag-']) {
+  color: var(--link-on-tag);
 }
 
 /* Comment highlights. Applied as Lexical MarkNodes (see caseText.js) and

@@ -16,7 +16,7 @@
 // loaded with a dynamic import() instead of require('vite') — the latter
 // works but hits Vite's deprecated, warning-emitting CJS compat shim.
 
-const { app, BrowserWindow, nativeTheme, session, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, nativeTheme, session, ipcMain, dialog, shell } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { execFileSync } = require('node:child_process')
@@ -154,6 +154,20 @@ let workspaceHandlersReady = false
 function setupWorkspaceHandlers() {
   if (workspaceHandlersReady) return
   workspaceHandlersReady = true
+  // Sidebar row menu -> "Reveal in File Explorer/Finder". Only the main
+  // process can reach the OS file manager; the renderer just names a path.
+  // showItemInFolder wants native separators, so a POSIX-normalized workspace
+  // path is converted back here rather than at every call site.
+  ipcMain.handle('threadline:show-in-folder', async (_e, absPath) => {
+    if (!absPath) return false
+    try {
+      shell.showItemInFolder(path.normalize(absPath))
+      return true
+    } catch (err) {
+      console.error('Failed to reveal path in file manager:', err)
+      return false
+    }
+  })
   ipcMain.handle('threadline:choose-workspace', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory', 'createDirectory'],

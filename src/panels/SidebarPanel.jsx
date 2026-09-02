@@ -230,6 +230,8 @@ export default function SidebarPanel({
   onRenameNode,
   onDuplicateRequest,
   onDeleteRequest,
+  onCopyPath,
+  onShowInFolder,
   onMoveNode,
 }) {
   const [rootDropActive, setRootDropActive] = useState(false)
@@ -297,6 +299,8 @@ export default function SidebarPanel({
                     onRenameNode={onRenameNode}
                     onDuplicateRequest={onDuplicateRequest}
                     onDeleteRequest={onDeleteRequest}
+                    onCopyPath={onCopyPath}
+                    onShowInFolder={onShowInFolder}
                     onMoveNode={onMoveNode}
                   />
                 ))}

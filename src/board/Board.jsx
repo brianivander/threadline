@@ -27,6 +27,7 @@ import ImagePanel from '@/panels/ImagePanel'
 import TextPanel from '@/panels/TextPanel'
 import { useComments } from '@/board/useComments'
 import { workspaceIdOf, workspacePathOf } from '@/lib/paths'
+import { copyText, showItemInFolder, toNativePath } from '@/lib/desktop'
 import { useWorkspaceSync } from '@/board/useWorkspaceSync'
 
 const STORAGE_KEY_SIDEBAR_HIDDEN = 'threadline_sidebar_hidden'
@@ -76,8 +77,8 @@ function dialogCopy(pending) {
       title,
       body:
         pending.action === 'duplicate'
-          ? `Create a copy of the case ${name}? Its content will be copied too.`
-          : `Delete case ${name}? This cannot be undone.`,
+          ? `Create a copy of the tab ${name}? Its content will be copied too.`
+          : `Delete tab ${name}? This cannot be undone.`,
     }
   }
   if (pending.action === 'duplicate') {
@@ -94,7 +95,7 @@ function dialogCopy(pending) {
     body:
       kind === 'folder'
         ? `Delete folder ${name}? This also deletes everything inside it. This cannot be undone.`
-        : `Delete file ${name}? This also deletes its cases. This cannot be undone.`,
+        : `Delete file ${name}? This also deletes its tabs. This cannot be undone.`,
   }
 }
 
@@ -204,18 +205,19 @@ export default function Board({
   }, [activeTab])
 
   // Run `go`, unless doing so would discard unsaved work — in which case hold
-  // it until the user has answered for it. Every navigation that unmounts an
-  // editor goes through here.
+  // it until the user has answered for it. Every navigation that LEAVES the
+  // story goes through here.
   //
-  // `part` says what the move actually puts at risk. Switching CASE TABS
-  // unmounts the body but leaves the story's params sitting there untouched, so
-  // it asks about the body alone — prompting for params there would be a dialog
-  // about work that was never in danger.
-  const guardLeave = useCallback((go, part = 'all') => {
+  // Moving between the tabs of one story does NOT: they are one document behind
+  // a single Save, so a switch is a move within the thing being edited rather
+  // than away from it. The body survives the switch regardless — useManualSave
+  // flushes its draft synchronously on unmount and restores it on the way back
+  // (see drafts.js) — so there is nothing at risk to ask about, and asking made
+  // the story read as several documents that it isn't.
+  const guardLeave = useCallback((go) => {
     const state = editorSave.current
-    const target = part === 'case' && state.case ? state.case : state
-    if (!target.dirty) return go()
-    setPendingLeave({ go, target })
+    if (!state.dirty) return go()
+    setPendingLeave({ go, target: state })
   }, [])
 
   const resolveLeave = useCallback(
@@ -439,7 +441,7 @@ export default function Board({
 
     setCases(list)
     setActiveCaseIndex(newActiveIndex)
-    actions.reorderCase({ storyId: selectedStory.id, orderedIds: list.map((c) => c.id) })
+    actions.reorderTab({ storyId: selectedStory.id, orderedIds: list.map((c) => c.id) })
   }
 
   function confirmPendingAction() {
@@ -447,13 +449,13 @@ export default function Board({
     if (!p) return
 
     if (p.action === 'duplicate') {
-      if (p.nodeType === 'case') actions.duplicateCase({ caseId: p.nodeId })
+      if (p.nodeType === 'case') actions.duplicateTab({ tabId: p.nodeId })
       else actions.duplicateNode({ nodeType: p.nodeType, nodeId: p.nodeId })
     } else if (p.action === 'delete') {
       if (p.nodeType === 'file') {
         actions.deleteStory({ storyId: p.nodeId })
       } else if (p.nodeType === 'case') {
-        actions.deleteCase({ caseId: p.nodeId })
+        actions.deleteTab({ tabId: p.nodeId })
         // Clamp the active tab into the range that remains after the delete
         // (the tree refreshes a tick later — compute from the current count).
         const maxIndex = (selectedStory?.cases || []).length - 2
@@ -527,6 +529,8 @@ export default function Board({
       onDeleteRequest={({ nodeType, nodeId, name }) =>
         setPendingAction({ action: 'delete', nodeType, nodeId, name })
       }
+      onCopyPath={({ nodeId }) => copyText(toNativePath(workspacePathOf(root, nodeId)))}
+      onShowInFolder={({ nodeId }) => showItemInFolder(workspacePathOf(root, nodeId))}
       onMoveNode={moveNode}
     />
   )
@@ -537,16 +541,16 @@ export default function Board({
       root={root}
       activeCaseIndex={activeCaseIndex}
       onUpdateStory={actions.updateStory}
-      onUpdateCase={actions.updateCase}
-      onAddCase={actions.addCase}
-      // Case tabs unmount each other's editor, so switching between them can
-      // lose an unsaved body — but not the params, which stay put.
-      onSelectCase={(index) =>
-        index === activeCaseIndex ? undefined : guardLeave(() => setActiveCaseIndex(index), 'case')
-      }
+      // The panel addresses a story's sections as `caseId`; the sync hook (and
+      // the API under it) call the same thing a tab. The boundary is here.
+      onUpdateCase={({ caseId, body }) => actions.updateTab({ tabId: caseId, body })}
+      onAddCase={actions.addTab}
+      // Switching tabs stays inside the story, so it is not guarded — see
+      // guardLeave. The outgoing editor flushes its draft as it unmounts.
+      onSelectCase={(index) => (index === activeCaseIndex ? undefined : setActiveCaseIndex(index))}
       reloadSignal={diskToken}
       onSaveStateChange={onSaveStateChange}
-      onRenameCase={actions.renameCase}
+      onRenameCase={({ caseId, name }) => actions.renameTab({ tabId: caseId, name })}
       onReorderCase={reorderCase}
       onCaseDuplicateRequest={({ caseId, storyId, name }) =>
         setPendingAction({ action: 'duplicate', nodeType: 'case', nodeId: caseId, storyId, name })

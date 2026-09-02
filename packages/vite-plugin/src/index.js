@@ -141,6 +141,24 @@ export default function threadlineVitePlugin(options = {}) {
       return json(res, 200, { data: await repo.searchFiles(root, q.get('q') || '') })
     }
 
+    // ---- stat (does this absolute path exist, and is it a file or a folder?)
+    // ----
+    // For the link editor, which has to reject a path before it is stored: the
+    // renderer cannot look at the disk, and a link to a folder or to a typo is
+    // worth catching while the user is still looking at the field rather than
+    // when they click it a week later. Reports what it found rather than
+    // erroring — "there is nothing there" is an answer, not a failure.
+    if (parts[0] === 'stat' && method === 'GET') {
+      const file = q.get('path')
+      if (!file) throw new Error('stat requires a path')
+      try {
+        const info = await fs.stat(file)
+        return json(res, 200, { data: { exists: true, kind: info.isDirectory() ? 'folder' : 'file' } })
+      } catch {
+        return json(res, 200, { data: { exists: false, kind: null } })
+      }
+    }
+
     // ---- folders ----
     if (parts[0] === 'folders' && method === 'GET' && !parts[1]) {
       return json(res, 200, { data: await repo.listFolders(root, q.get('parent_id') || null) })

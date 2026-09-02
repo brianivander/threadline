@@ -18,8 +18,26 @@
 
 const PREFIX = 'threadline_draft:'
 
+// Scopes this session has written a draft for. Module state, so it starts empty
+// on every load — which is exactly the question worth asking when a draft turns
+// up: did THIS session write it, or did it outlive a crash?
+//
+// A draft is written whenever an editor unmounts with unsaved text, and that
+// happens in ordinary use — switching between a story's tabs. Restoring the
+// text is right either way, but announcing it as a recovery is only right for
+// the crash: the user who just clicked a tab knows perfectly well what they
+// typed, and telling them it was rescued makes a normal move look like an
+// incident.
+const writtenThisSession = new Set()
+
 export function draftKey(scope) {
   return `${PREFIX}${String(scope || '')}`
+}
+
+// Did this session write the draft now sitting under `scope`? False for one
+// left behind by a previous run — the case that deserves a notice.
+export function draftIsFromThisSession(scope) {
+  return !!scope && writtenThisSession.has(String(scope))
 }
 
 // null when there is no draft, or when what's stored isn't one — a hand-edited
@@ -47,6 +65,10 @@ export function readDraft(scope) {
 // not stop the thing it was insuring.
 export function writeDraft(scope, { text, baseline, at }) {
   if (!scope) return false
+  // Recorded even if the write below fails: the point is that this session is
+  // the author of whatever is now under this scope, and a failed write leaves
+  // nothing there to misread later.
+  writtenThisSession.add(String(scope))
   try {
     localStorage.setItem(
       draftKey(scope),
@@ -60,6 +82,7 @@ export function writeDraft(scope, { text, baseline, at }) {
 
 export function clearDraft(scope) {
   if (!scope) return
+  writtenThisSession.delete(String(scope))
   try {
     localStorage.removeItem(draftKey(scope))
   } catch {

@@ -1,34 +1,30 @@
-// The board's right column: story detail (title, links, criticality) and the
-// case tabs with their markdown editors.
+// The board's right column: the story title and the case tabs with their
+// markdown editors.
 //
-// ONE Save covers the whole story — title, links, criticality and the open case
-// body — because that is how the panel reads to the person using it: a story is
-// one thing, not four independently-saved fragments. The body reports its state
-// up from CaseEditor rather than saving itself, which is what lets a single
-// button speak for all of it.
+// ONE Save covers the whole story — the title and the open case body — because
+// that is how the panel reads to the person using it: a story is one thing, not
+// two independently-saved fragments. The body reports its state up from
+// CaseEditor rather than saving itself, which is what lets a single button
+// speak for all of it.
 //
 // The title makes the save ORDER load-bearing, and it is the thing to be
 // careful about when changing anything here. The filename IS the title, so
-// saving it renames the file — and the file's path is the id that the links,
-// the criticality and every case (`<story path>::<index>`) are addressed by.
-// Everything else must therefore be written BEFORE the rename; see saveAll and
-// saveParams, which both end with the title for that reason.
+// saving it renames the file — and the file's path is the id every case
+// (`<story path>::<index>`) is addressed by. The body must therefore be written
+// BEFORE the rename; see saveAll, which ends with the title for that reason.
+//
+// The story's `links` and `criticality` no longer have an editor here — the
+// metadata fold that held them is gone. They are deliberately still READ and
+// WRITTEN BACK by packages/core, so the frontmatter of a story that already has
+// them survives every save this panel makes: updateFile patches named fields
+// only, and this panel now names just the title.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cva } from 'class-variance-authority'
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  MoreHorizontal,
-  Plus,
-  Trash2,
-} from 'lucide-react'
+import { Check, MoreHorizontal, Plus, Trash2 } from 'lucide-react'
 
-import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
@@ -48,14 +44,12 @@ import CaseEditor from '@/board/CaseEditor'
 import { useManualSave } from '@/board/useManualSave'
 import { SaveButton, SaveNotices } from '@/panels/SaveBar'
 import { clearDrag, getDrag, setDrag } from '@/board/dnd'
-import { TAG_COLORS, swatchStyle, tagColorLabel, tagStyle } from '@/board/linkTags'
-import { isAbsolutePath, storyDirOf, toRelativePath, workspacePathOf } from '@/lib/paths'
+import { storyDirOf, workspacePathOf } from '@/lib/paths'
 
-const CRITICALITIES = ['P1', 'P2', 'P3', 'P4']
 const MAX_CASES = 10
 
 // Reorder indicator for a case tab — one definition for both edges.
-const tabVariants = cva('group/tab relative flex min-w-0 items-center', {
+const tabVariants = cva('group/tab relative flex min-w-16 shrink items-center', {
   variants: {
     dropEdge: {
       none: '',
@@ -72,62 +66,37 @@ const tabVariants = cva('group/tab relative flex min-w-0 items-center', {
 export function caseLabel(c, i) {
   if (c?.name) return c.name
   const m = String(c?.id || '').match(/(\d+)\s*$/)
-  return m ? `Case ${parseInt(m[1], 10)}` : `Case ${i + 1}`
+  return m ? `Tab ${parseInt(m[1], 10)}` : `Tab ${i + 1}`
 }
 
-const EMPTY_LINK = { url: '', tag: '', color: '' }
-
-// story.links is an array of {url, tag, color}. The editor keeps at least one
-// (empty) row so there's never a field-less "add your first link", and widens a
-// bare string in case an older payload reaches the panel.
-function parseLinks(raw) {
-  const rows = (Array.isArray(raw) ? raw : []).map((l) =>
-    typeof l === 'string'
-      ? { ...EMPTY_LINK, url: l }
-      : { url: l?.url || '', tag: l?.tag || '', color: l?.color || '' },
-  )
-  return rows.length ? rows : [{ ...EMPTY_LINK }]
-}
-
-// ---- params (title + links + criticality) -----------------------------------
+// ---- params (the title) -----------------------------------------------------
 //
-// Saved as ONE unit, because that's how the user thinks of them: a single Save
-// on the title row writes the whole story. They travel through useManualSave as
-// a serialized string so they get the same dirty tracking and localStorage
-// crash backup the body editors already have, rather than a second mechanism
-// that would have to be kept in step with the first.
+// Only the title is left here now that the metadata fold is gone, but it still
+// travels through useManualSave as a serialized string rather than as plain
+// state. That is not ceremony: it is what gives the title the same dirty
+// tracking and localStorage crash backup the body editors have, and what lets
+// one Save button speak for the title and the body together. The JSON envelope
+// stays for the same reason — it is the shape useManualSave's scope-keyed
+// backups were written with, and a second field will want it back.
 
-function serializeParams({ title, links, criticality }) {
-  return JSON.stringify({ title, links, criticality })
+function serializeParams({ title }) {
+  return JSON.stringify({ title })
 }
 
 function deserializeParams(raw) {
   try {
     const parsed = JSON.parse(raw)
-    return {
-      title: typeof parsed?.title === 'string' ? parsed.title : '',
-      links: parseLinks(parsed?.links),
-      criticality: parsed?.criticality || 'P3',
-    }
+    return { title: typeof parsed?.title === 'string' ? parsed.title : '' }
   } catch {
-    return { title: '', links: parseLinks(null), criticality: 'P3' }
+    return { title: '' }
   }
 }
 
-// What would actually reach disk. A row with no url yet is editor scaffolding —
-// an added-but-unfilled field — not data, so comparing on this means clicking
-// "Add link" doesn't mark the story dirty, and removing the empty row again
-// doesn't leave it dirty either. The title compares trimmed, for the same
-// reason: trailing spaces never survive to the filename.
-function persistedParams(raw, storyDir) {
-  const { title, links, criticality } = deserializeParams(raw)
-  return JSON.stringify({
-    title: title.trim(),
-    links: links
-      .map((l) => ({ url: toRelativePath(l.url, storyDir).trim(), tag: l.tag.trim(), color: l.color }))
-      .filter((l) => l.url),
-    criticality,
-  })
+// What would actually reach disk. The title compares TRIMMED because trailing
+// spaces never survive to the filename — typing one and deleting it again must
+// not leave the story looking dirty.
+function persistedParams(raw) {
+  return JSON.stringify({ title: deserializeParams(raw).title.trim() })
 }
 
 export default function StoryPanel({
@@ -154,12 +123,6 @@ export default function StoryPanel({
   reloadSignal = 0,
   onSaveStateChange,
 }) {
-  const [paramsCollapsed, setParamsCollapsed] = useState(false)
-
-  // Index of the link row whose colour swatches are open, or -1. Only one at a
-  // time — the panel is anchored under the tag field it belongs to.
-  const [swatchRow, setSwatchRow] = useState(-1)
-
   // Case-tab rename state.
   const [renamingIndex, setRenamingIndex] = useState(-1)
   const [renameValue, setRenameValue] = useState('')
@@ -172,63 +135,43 @@ export default function StoryPanel({
   const [dropTarget, setDropTarget] = useState({ index: -1, edge: 'none' })
 
   const titleRef = useRef(null)
-  const swatchRef = useRef(null)
   const storyIdRef = useRef(story?.id)
 
   const storyId = story?.id
   const cases = story?.cases || []
 
-  // The absolute folder this story lives in — the base every relative link is
-  // resolved against, and the anchor a pasted absolute path is rebased onto.
+  // The absolute folder this story lives in. The link editor that used to need
+  // this is gone; it stays because CaseEditor resolves the images pasted into a
+  // case body against it.
   const storyDir = storyDirOf(root, storyId)
 
   // ---- params + body: one save between them ---------------------------------
 
   const paramsBaseline = useMemo(
-    () =>
-      serializeParams({
-        title: story?.title || '',
-        links: parseLinks(story?.links),
-        criticality: story?.criticality || 'P3',
-      }),
-    [story?.title, story?.links, story?.criticality],
+    () => serializeParams({ title: story?.title || '' }),
+    [story?.title],
   )
 
-  // Only the fields that actually differ are written. Each one is a separate
-  // PUT that refetches the tree, so writing all three every time would cost
-  // three round-trips to change one dropdown.
+  // The title is the only field this panel writes, and writing it RENAMES the
+  // file — the filename is the story's id. Nothing else may be written after
+  // it, which is why saveAll runs the body first; see the note there.
   //
-  // ORDER IS LOAD-BEARING. The title is written LAST because saving it renames
-  // the file, and the filename is the story's id — which every other write here
-  // is addressed by. Renaming first would leave the links and criticality
-  // writes pointing at a path that no longer exists.
+  // `links` and `criticality` are simply not named here, and that is what keeps
+  // them safe: updateFile patches the fields it is given, so a story that
+  // already carries them keeps them across every save.
   const saveParams = useCallback(
     async (raw) => {
       if (!story) return
-      const { title, links, criticality } = deserializeParams(raw)
-      const nextTitle = title.trim()
+      const nextTitle = deserializeParams(raw).title.trim()
       // Refused rather than silently skipped: the filename IS the title, so
       // there is no such thing as a story without one, and a Save that quietly
       // did nothing would leave the field dirty forever with no explanation.
       if (!nextTitle) throw new Error('A story needs a title.')
-
-      const asStored = (rows) =>
-        rows
-          .map((l) => ({ url: toRelativePath(l.url, storyDir).trim(), tag: l.tag.trim(), color: l.color }))
-          .filter((l) => l.url)
-
-      const nextLinks = asStored(links)
-      if (JSON.stringify(nextLinks) !== JSON.stringify(asStored(parseLinks(story.links)))) {
-        await onUpdateStory({ storyId: story.id, field: 'links', value: nextLinks })
-      }
-      if (criticality !== (story.criticality || 'P3')) {
-        await onUpdateStory({ storyId: story.id, field: 'criticality', value: criticality })
-      }
       if (nextTitle !== story.title) {
         await onUpdateStory({ storyId: story.id, field: 'title', value: nextTitle })
       }
     },
-    [story, onUpdateStory, storyDir],
+    [story, onUpdateStory],
   )
 
   const params = useManualSave({
@@ -236,28 +179,18 @@ export default function StoryPanel({
     baseline: paramsBaseline,
     ready: !!storyId,
     onSave: saveParams,
-    isEqual: useCallback((a, b) => persistedParams(a, storyDir) === persistedParams(b, storyDir), [storyDir]),
+    isEqual: useCallback((a, b) => persistedParams(a) === persistedParams(b), []),
   })
 
-  const {
-    title: titleDraft,
-    links: linksDraft,
-    criticality: criticalityDraft,
-  } = useMemo(() => deserializeParams(params.text), [params.text])
+  const { title: titleDraft } = useMemo(() => deserializeParams(params.text), [params.text])
 
-  // Every params field patches the same serialized value, so the title, links
-  // and criticality share one dirty flag and one Save.
+  // Kept as a patch-shaped helper rather than collapsed into a bare setter: the
+  // envelope is what useManualSave tracks, so an edit has to go through
+  // serializeParams either way.
   const paramsEdit = params.edit
   const editParams = useCallback(
-    (patch) =>
-      paramsEdit(
-        serializeParams({
-          title: patch.title ?? titleDraft,
-          links: patch.links ?? linksDraft,
-          criticality: patch.criticality ?? criticalityDraft,
-        }),
-      ),
-    [paramsEdit, titleDraft, linksDraft, criticalityDraft],
+    (patch) => paramsEdit(serializeParams({ title: patch.title ?? titleDraft })),
+    [paramsEdit, titleDraft],
   )
 
   // The case body reports up here rather than to Board, so the Save button on
@@ -303,16 +236,14 @@ export default function StoryPanel({
     })
   }, [dirty, caseDirty, saveAll, discardAll, onSaveStateChange])
 
-  // A different story → abandon any in-progress rename. The title, links and
-  // criticality drafts resync themselves: useManualSave re-reads on a new
-  // scope, and a title save is now something the user asked for rather than a
-  // debounce firing mid-sentence, so there is no in-flight write to guard
-  // against clobbering what they are still typing.
+  // A different story → abandon any in-progress rename. The title draft resyncs
+  // itself: useManualSave re-reads on a new scope, and a title save is now
+  // something the user asked for rather than a debounce firing mid-sentence, so
+  // there is no in-flight write to guard against clobbering what they are still
+  // typing.
   useEffect(() => {
     if (storyIdRef.current === storyId) return
     storyIdRef.current = storyId
-    // The params draft resyncs itself — useManualSave re-reads on a new scope.
-    setSwatchRow(-1)
     // ...unless the "unsaved change?" dialog is open: the story switch WAS the
     // click-away that opened it, so keep the pending name available.
     if (!showRenameConfirm) endRename()
@@ -324,56 +255,6 @@ export default function StoryPanel({
     renameInputRef.current?.focus()
     renameInputRef.current?.select()
   }, [renamingIndex, showRenameConfirm])
-
-  // Dismiss the colour swatches on a click anywhere else, or on Escape. The
-  // ref wraps the tag field together with its panel, so clicking back into the
-  // field it belongs to doesn't count as outside.
-  useEffect(() => {
-    if (swatchRow === -1) return
-    function onPointerDown(e) {
-      if (!swatchRef.current?.contains(e.target)) setSwatchRow(-1)
-    }
-    function onKeyDown(e) {
-      if (e.key === 'Escape') setSwatchRow(-1)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [swatchRow])
-
-  // ---- links ---------------------------------------------------------------
-
-  // One patch path for all three fields of a row — url, tag, and the colour
-  // picked from the swatches. A pasted absolute filesystem path is rebased onto
-  // the story's folder as a relative path immediately, so the shared repo stays
-  // portable across machines.
-  //
-  // Nothing here writes to disk: it edits the params draft, and Save writes it.
-  // Rows with no url yet stay in the draft so an empty input doesn't vanish out
-  // from under the user, and are dropped on the way to the file.
-  function onLinkInput(i, patch) {
-    editParams({
-      links: linksDraft.map((l, idx) =>
-        idx === i ? { ...l, ...patch, url: toRelativePath(patch.url ?? l.url, storyDir) } : l,
-      ),
-    })
-  }
-
-  // The copy lands directly under its original, so a duplicated row doesn't
-  // jump to the bottom of a long list.
-  function duplicateLink(i) {
-    editParams({ links: linksDraft.flatMap((l, idx) => (idx === i ? [l, { ...l }] : [l])) })
-    setSwatchRow(-1)
-  }
-
-  function removeLink(i) {
-    const filtered = linksDraft.filter((_, idx) => idx !== i)
-    editParams({ links: filtered.length ? filtered : [{ ...EMPTY_LINK }] })
-    setSwatchRow(-1)
-  }
 
   // ---- case rename ---------------------------------------------------------
 
@@ -465,9 +346,9 @@ export default function StoryPanel({
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
       <div className="shrink-0 px-4 pt-3">
-        {/* The story's own controls: rename, delete, and the parameters
-            fold. Everything that acts on another panel lives in the
-            column’s shared bar above (see EditorBar). */}
+        {/* The story's own controls: rename and delete. Everything that acts
+            on another panel lives in the column’s shared bar above (see
+            EditorBar). */}
         <div className="mb-2 flex items-center gap-1">
           <input
             ref={titleRef}
@@ -478,8 +359,7 @@ export default function StoryPanel({
             // of the story's one Save, like everything else on this panel.
             onChange={(e) => editParams({ title: e.target.value })}
           />
-          {/* One Save for the whole story: title, links, criticality and the
-              case body below. */}
+          {/* One Save for the whole story: the title and the case body. */}
           <SaveButton dirty={dirty} saving={params.saving} onSave={saveAll} />
           <Button
             variant="ghost"
@@ -491,15 +371,6 @@ export default function StoryPanel({
           >
             <Trash2 />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={paramsCollapsed ? 'Show parameters' : 'Hide parameters'}
-            title={paramsCollapsed ? 'Show parameters' : 'Hide parameters'}
-            onClick={() => setParamsCollapsed((v) => !v)}
-          >
-            <ChevronDown className={cn('transition-transform', paramsCollapsed ? '' : 'rotate-180')} />
-          </Button>
         </div>
 
         <SaveNotices
@@ -509,117 +380,6 @@ export default function StoryPanel({
           onSave={saveAll}
         />
 
-        {!paramsCollapsed && (
-          <>
-            <div className="mb-2 flex items-start gap-2 text-[13px]">
-              <label className="text-muted-foreground w-14 shrink-0 pt-2 text-xs">Links</label>
-              <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-                {linksDraft.map((link, i) => (
-                  <div key={i} className="flex items-center gap-1">
-                    <div
-                      ref={swatchRow === i ? swatchRef : null}
-                      className="relative w-28 shrink-0"
-                    >
-                      <Input
-                        className="h-7 w-full text-[13px]"
-                        style={tagStyle(link.color)}
-                        placeholder="tag"
-                        value={link.tag}
-                        onChange={(e) => onLinkInput(i, { tag: e.target.value })}
-                        onFocus={() => setSwatchRow(i)}
-                      />
-                      {swatchRow === i && (
-                        <div
-                          className="bg-popover text-popover-foreground absolute top-full left-0 z-50 mt-1 grid w-max grid-cols-6 gap-1 rounded-md border p-1.5 shadow-md"
-                          role="group"
-                          aria-label="Tag colour"
-                        >
-                          {/* Twelve swatches and no separate "none" button —
-                              clicking the selected one clears it, so the grid
-                              stays two clean rows of six. */}
-                          {TAG_COLORS.map((color) => (
-                            <button
-                              key={color}
-                              type="button"
-                              aria-label={tagColorLabel(color)}
-                              aria-pressed={link.color === color}
-                              title={tagColorLabel(color)}
-                              className={cn(
-                                'size-4 rounded-full border',
-                                link.color === color && 'ring-ring ring-2 ring-offset-1',
-                              )}
-                              style={swatchStyle(color)}
-                              onClick={() => onLinkInput(i, { color: link.color === color ? '' : color })}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <Input
-                      className="h-7 flex-1 text-[13px]"
-                      placeholder="https://… or a local file path"
-                      value={link.url}
-                      onChange={(e) => onLinkInput(i, { url: e.target.value })}
-                    />
-                    {link.url.trim() && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Open in browser"
-                        title="Open in browser"
-                        onClick={() => onOpenLink(link.url.trim())}
-                      >
-                        <ChevronRight />
-                      </Button>
-                    )}
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon-sm" aria-label="Link actions" title="Link actions">
-                          <MoreHorizontal />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onSelect={() => duplicateLink(i)}>Duplicate</DropdownMenuItem>
-                        <DropdownMenuItem variant="destructive" onSelect={() => removeLink(i)}>
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="text-muted-foreground self-start"
-                  // An empty row is scaffolding, not data — see persistedParams:
-                  // adding one doesn't mark the story dirty.
-                  onClick={() => editParams({ links: [...linksDraft, { ...EMPTY_LINK }] })}
-                >
-                  + add link
-                </Button>
-              </div>
-            </div>
-
-            <div className="mb-2 flex items-center gap-2 text-[13px]">
-              <label className="text-muted-foreground w-14 shrink-0 text-xs">Criticality</label>
-              <Select
-                value={criticalityDraft}
-                onValueChange={(value) => editParams({ criticality: value })}
-              >
-                <SelectTrigger size="sm" className="w-28 text-[13px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CRITICALITIES.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </>
-        )}
       </div>
 
       {cases.length ? (
@@ -634,7 +394,7 @@ export default function StoryPanel({
             onSelectCase(index)
           }}
         >
-          <TabsList className="w-full min-w-0 shrink-0 justify-start overflow-hidden border-b">
+          <TabsList className="w-full min-w-0 shrink-0 justify-start overflow-x-auto border-b">
             {cases.map((c, i) => {
               const isRenaming = renamingIndex === i && renameStoryIdRef.current === storyId
               // The rename field and the "…" menu are SIBLINGS of the trigger,
@@ -684,13 +444,13 @@ export default function StoryPanel({
                     </span>
                   ) : (
                     <>
-                      <TabsTrigger value={`case-${i}`} className="max-w-50 pr-7">
+                      <TabsTrigger value={`case-${i}`} className="w-full max-w-50">
                         <span className="overflow-hidden text-ellipsis whitespace-nowrap">{caseLabel(c, i)}</span>
                       </TabsTrigger>
-                      <span className="absolute inset-y-0 right-0 flex items-center pr-1 opacity-0 transition-opacity group-hover/tab:opacity-100 has-[[data-state=open]]:opacity-100">
+                      <span className="bg-linear-to-r from-transparent to-background to-30% absolute top-0 right-0 bottom-0.5 flex items-center pr-1 pl-5 opacity-0 transition-opacity group-hover/tab:opacity-100 has-[[data-state=open]]:opacity-100">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon-xs" aria-label="Case actions">
+                            <Button variant="ghost" size="icon-xs" aria-label="Tab actions">
                               <MoreHorizontal />
                             </Button>
                           </DropdownMenuTrigger>
@@ -723,9 +483,9 @@ export default function StoryPanel({
               <Button
                 variant="ghost"
                 size="icon-sm"
-                className="ml-1 self-center"
-                aria-label="Add case"
-                title="Add case"
+                className="ml-1 shrink-0 self-center"
+                aria-label="Add tab"
+                title="Add tab"
                 onClick={() => onAddCase({ storyId: story.id })}
               >
                 <Plus />
@@ -756,6 +516,9 @@ export default function StoryPanel({
                 onRequestComment={onRequestComment}
                 onActivateThread={onActivateThread}
                 onOpenThread={onOpenThread}
+                // The same handler the link chips above use, so a link written
+                // into the body opens exactly where a chip's would.
+                onOpenLink={onOpenLink}
               />
             </TabsContent>
           ))}
@@ -765,13 +528,13 @@ export default function StoryPanel({
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Add case"
-            title="Add case"
+            aria-label="Add tab"
+            title="Add tab"
             onClick={() => onAddCase({ storyId: story.id })}
           >
             <Plus />
           </Button>
-          <span>No cases yet — click + to add one.</span>
+          <span>No tabs yet — click + to add one.</span>
         </div>
       )}
 

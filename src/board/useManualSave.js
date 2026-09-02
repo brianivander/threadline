@@ -25,7 +25,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { clearDraft, draftMatchesDisk, readDraft, writeDraft } from '@/board/drafts'
+import { clearDraft, draftIsFromThisSession, draftMatchesDisk, readDraft, writeDraft } from '@/board/drafts'
 
 // Short enough that a crash loses at most a few words, long enough that holding
 // a key down isn't one localStorage write per character.
@@ -68,6 +68,7 @@ export function useManualSave({ scope, baseline, ready = true, onSave, onSettled
 
     const draft = readDraft(scope)
     if (draft && !equalRef.current(draft.text, disk)) {
+      const stale = !draftMatchesDisk(draft, disk)
       textRef.current = draft.text
       dirtyRef.current = true
       setState((s) => ({
@@ -75,9 +76,15 @@ export function useManualSave({ scope, baseline, ready = true, onSave, onSettled
         text: draft.text,
         dirty: true,
         seed: s.seed + 1,
-        // `stale` is the dangerous case: the draft was typed against a version
-        // of this file that is no longer what's on disk.
-        recovered: { at: draft.at, stale: !draftMatchesDisk(draft, disk) },
+        // The text comes back either way; the notice is about whether its
+        // return is news. A draft this session wrote is one the user is still
+        // in the middle of — they left this editor and came back, which is what
+        // switching a story's tabs does — so it is restored silently. One that
+        // outlived a crash gets the notice. `stale` overrides both: the file
+        // moved underneath the draft, so saving would overwrite whatever
+        // arrived and discarding would lose what they wrote. That is worth
+        // interrupting for however the draft got here.
+        recovered: !stale && draftIsFromThisSession(scope) ? null : { at: draft.at, stale },
       }))
       return
     }

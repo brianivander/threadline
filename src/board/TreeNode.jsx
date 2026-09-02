@@ -49,6 +49,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { clearDrag, getDrag, setDrag } from '@/board/dnd'
+import { canShowInFolder, revealLabel } from '@/lib/desktop'
 
 // The row's states as one definition, so the "selected"/"drop target"/
 // "dragging" treatments can never drift apart again.
@@ -97,11 +98,26 @@ const KIND_GLYPHS = { story: FileText, doc: File, page: FileCode, text: FileCode
 const TAG_CLASS =
   'text-muted-foreground bg-foreground/10 shrink-0 rounded-sm px-1 font-mono text-[9px] leading-[1.5] tracking-wide uppercase'
 
-const MENU_ITEMS = [
-  { value: 'rename', label: 'Rename' },
-  { value: 'duplicate', label: 'Duplicate' },
-  { value: 'delete', label: 'Delete', variant: 'destructive' },
-]
+// Both menus on a row — the … dropdown and the right-click one — offer the
+// same actions, so they are one list rendered twice rather than two lists that
+// can drift. `{ separator: true }` entries are rendered as the menus' own
+// separator component.
+//
+// "Reveal" is dropped outside the desktop shell: in a plain browser tab there
+// is no file manager to hand the path to, and a menu item that silently does
+// nothing is worse than one that isn't there. Copying a path needs no shell,
+// so it always stays.
+function menuItemsFor() {
+  return [
+    { value: 'rename', label: 'Rename' },
+    { value: 'duplicate', label: 'Duplicate' },
+    { separator: true },
+    { value: 'copy-path', label: 'Copy path' },
+    ...(canShowInFolder() ? [{ value: 'reveal', label: revealLabel() }] : []),
+    { separator: true },
+    { value: 'delete', label: 'Delete', variant: 'destructive' },
+  ]
+}
 
 export default function TreeNode({
   node,
@@ -116,6 +132,8 @@ export default function TreeNode({
   onRenameNode,
   onDuplicateRequest,
   onDeleteRequest,
+  onCopyPath,
+  onShowInFolder,
   onMoveNode,
 }) {
   const isFolder = type === 'folder'
@@ -162,6 +180,8 @@ export default function TreeNode({
     if (action === 'add-doc') onAddNode({ addType: 'doc', parentId: node.id })
     if (action === 'rename') startRename()
     if (action === 'duplicate') onDuplicateRequest({ nodeType: type, nodeId: node.id, name })
+    if (action === 'copy-path') onCopyPath({ nodeType: type, nodeId: node.id, name })
+    if (action === 'reveal') onShowInFolder({ nodeType: type, nodeId: node.id, name })
     if (action === 'delete') onDeleteRequest({ nodeType: type, nodeId: node.id, name })
   }
 
@@ -212,6 +232,7 @@ export default function TreeNode({
   }
 
   const FileGlyph = KIND_GLYPHS[node.kind] || File
+  const menuItems = menuItemsFor()
 
   const row = (
     <div
@@ -292,15 +313,19 @@ export default function TreeNode({
                     <DropdownMenuSeparator />
                   </>
                 )}
-                {MENU_ITEMS.map((item) => (
-                  <DropdownMenuItem
-                    key={item.value}
-                    variant={item.variant}
-                    onSelect={() => onMenuAction(item.value)}
-                  >
-                    {item.label}
-                  </DropdownMenuItem>
-                ))}
+                {menuItems.map((item, i) =>
+                  item.separator ? (
+                    <DropdownMenuSeparator key={`sep-${i}`} />
+                  ) : (
+                    <DropdownMenuItem
+                      key={item.value}
+                      variant={item.variant}
+                      onSelect={() => onMenuAction(item.value)}
+                    >
+                      {item.label}
+                    </DropdownMenuItem>
+                  ),
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </span>
@@ -324,11 +349,15 @@ export default function TreeNode({
               <ContextMenuSeparator />
             </>
           )}
-          {MENU_ITEMS.map((item) => (
-            <ContextMenuItem key={item.value} variant={item.variant} onSelect={() => onMenuAction(item.value)}>
-              {item.label}
-            </ContextMenuItem>
-          ))}
+          {menuItems.map((item, i) =>
+            item.separator ? (
+              <ContextMenuSeparator key={`sep-${i}`} />
+            ) : (
+              <ContextMenuItem key={item.value} variant={item.variant} onSelect={() => onMenuAction(item.value)}>
+                {item.label}
+              </ContextMenuItem>
+            ),
+          )}
         </ContextMenuContent>
       </ContextMenu>
 
@@ -352,6 +381,8 @@ export default function TreeNode({
               onRenameNode={onRenameNode}
               onDuplicateRequest={onDuplicateRequest}
               onDeleteRequest={onDeleteRequest}
+              onCopyPath={onCopyPath}
+              onShowInFolder={onShowInFolder}
               onMoveNode={onMoveNode}
             />
           ))}

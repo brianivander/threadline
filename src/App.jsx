@@ -80,10 +80,13 @@ export default function App() {
     setQuery,
     results,
     searching,
-    cases,
-    setCases,
+    // The hook speaks of a story's sections as `tabs`; Board reserves that name
+    // for the open-file tabs in the editor bar, so they arrive under the older
+    // `cases` name here rather than colliding one level down.
+    tabs: cases,
+    setTabs: setCases,
     reloadAll,
-    refetchCases,
+    refetchTabs: refetchCases,
     actions,
   } = useThreadlineSync({ root, storyId: selectedStoryId, onFileIdChange, onFolderRepath })
 

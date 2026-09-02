@@ -7,6 +7,7 @@ import {
   isAbsolutePath,
   storyDirOf,
   relativePath,
+  toAbsolutePath,
   toRelativePath,
   resolveLocalLink,
   isLocalMarkdownUrl,
@@ -163,4 +164,24 @@ test('workspaceIdOf recovers the id, and reports nothing for a path outside the 
 test('workspacePathOf and workspaceIdOf round-trip', () => {
   const id = 'folder/sub/A spec.md'
   assert.equal(workspaceIdOf('C:/repo', workspacePathOf('C:/repo', id)), id)
+})
+
+test('toRelativePath keeps an absolute path when the two share no root', () => {
+  // A different drive has no relative route from the story's folder; counting
+  // levels would invent '../../D:/x/spec.md', which resolves nowhere.
+  assert.equal(toRelativePath('D:\\x\\spec.md', 'C:/repo/folder'), 'D:/x/spec.md')
+  // A UNC share against a local path, same reasoning.
+  assert.equal(toRelativePath('//server/share/spec.md', 'C:/repo/folder'), '//server/share/spec.md')
+})
+
+test('toAbsolutePath recognises the forms a paste arrives in', () => {
+  assert.equal(toAbsolutePath('C:\\repo\\spec.md'), 'C:/repo/spec.md')
+  assert.equal(toAbsolutePath('/repo/spec.md'), '/repo/spec.md')
+  assert.equal(toAbsolutePath('file:///C:/repo/spec.md'), 'C:/repo/spec.md')
+})
+
+test('toAbsolutePath returns empty for anything that is not an absolute path', () => {
+  assert.equal(toAbsolutePath('https://figma.com/x'), '')
+  assert.equal(toAbsolutePath('../designs/mock.html'), '')
+  assert.equal(toAbsolutePath(''), '')
 })

@@ -391,7 +391,7 @@ function serializeLinks(links) {
 }
 
 // A file the tree lists but this module never parses: an HTML page, an image,
-// or a markdown file that isn't a story. `cases`/`threads` are present and
+// or a markdown file that isn't a story. `tabs`/`threads` are present and
 // empty rather than absent, so every caller that reaches for them gets "none"
 // and not a crash.
 function plainFileNode(root, id, kind) {
@@ -403,7 +403,7 @@ function plainFileNode(root, id, kind) {
     kind,
     ext: ext.replace(/^\./, '').toLowerCase(),
     title: path.basename(abs, ext),
-    cases: [],
+    tabs: [],
     threads: [],
   }
 }
@@ -426,7 +426,7 @@ async function readFile_(root, id) {
   const raw = await fs.readFile(abs, 'utf8').catch(() => null)
   if (raw === null) return null
 
-  const { frontmatter, cases, threads } = parseStoryFile(raw)
+  const { frontmatter, tabs, threads } = parseStoryFile(raw)
   const { criticality, links, ...rest } = frontmatter
   // The filename IS the title, so the extension is presentation, not content.
   const ext = rawExtOf(abs)
@@ -439,7 +439,7 @@ async function readFile_(root, id) {
     criticality: criticality || 'P1',
     links: normalizeLinks(links),
     _extra: rest,
-    cases: cases.map((c, i) => ({ id: `${toPosix(id)}::${i}`, story_id: toPosix(id), name: c.name, body: c.body })),
+    tabs: tabs.map((t, i) => ({ id: `${toPosix(id)}::${i}`, story_id: toPosix(id), name: t.name, body: t.body })),
     threads,
   }
 }
@@ -497,7 +497,7 @@ export async function createFile(root, data) {
     await writeFile_(root, id, {
       criticality: data?.criticality || 'P1',
       links: data?.links || [],
-      cases: [],
+      tabs: [],
     })
   return getFile(root, id)
 }
@@ -666,7 +666,7 @@ function enrichThread(thread, file) {
     id: thread.id,
     story_id: file.id,
     story_title: file.title,
-    case_name: thread.caseName || '',
+    case_name: thread.tabName || '',
     status: thread.status,
     anchor: thread.anchor,
     comments,
@@ -711,7 +711,7 @@ export async function createThread(root, data) {
   const id = newThreadId()
   const thread = {
     id,
-    caseName: data.case_name || '',
+    tabName: data.case_name || '',
     status: 'open',
     anchor: data.anchor?.quote
       ? {

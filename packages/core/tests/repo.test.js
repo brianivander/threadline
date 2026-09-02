@@ -124,32 +124,32 @@ test("createFile kind 'doc' writes a plain empty .md, not a story", async () => 
   })
 })
 
-test('cases: parsed from `<!-- case: -->` sections, auto "Case N" naming, update/delete by index', async () => {
+test('tabs: parsed from `<!-- tab: -->` sections, auto "Tab N" naming, update/delete by index', async () => {
   await withWorkspace(async (root) => {
     const a = await createFolder(root, { name: 'App' })
     const b = await createFolder(root, { parent_id: a.id, name: 'Auth' })
     const s = await createFile(root, { parent_id: b.id, title: 'Login' })
 
-    assert.deepEqual(await listTabs(root, s.id), [], 'a fresh file has no cases')
+    assert.deepEqual(await listTabs(root, s.id), [], 'a fresh file has no tabs')
 
     const c1 = await createTab(root, { story_id: s.id, body: 'Happy path' })
     const c2 = await createTab(root, { story_id: s.id, body: 'Edge case' })
-    assert.equal(c1.name, 'Case 1', 'auto-name is stored at creation')
-    assert.equal(c2.name, 'Case 2')
+    assert.equal(c1.name, 'Tab 1', 'auto-name is stored at creation')
+    assert.equal(c2.name, 'Tab 2')
 
     const updated = await updateTab(root, c1.id, { body: 'Happy path (revised)' })
     assert.equal(updated.body, 'Happy path (revised)')
     assert.equal((await getTab(root, c1.id)).body, 'Happy path (revised)')
 
-    // Deleting c1 must not let a later create reuse "Case 1"'s number if it
+    // Deleting c1 must not let a later create reuse "Tab 1"'s number if it
     // collides with a still-existing name.
     await deleteTab(root, c1.id)
     const remaining = await listTabs(root, s.id)
     assert.equal(remaining.length, 1)
-    assert.equal(remaining[0].name, 'Case 2')
+    assert.equal(remaining[0].name, 'Tab 2')
 
     const c3 = await createTab(root, { story_id: s.id, body: 'Third' })
-    assert.equal(c3.name, 'Case 3', 'next auto-name skips the still-existing Case 2')
+    assert.equal(c3.name, 'Tab 3', 'next auto-name skips the still-existing Tab 2')
   })
 })
 
@@ -272,7 +272,7 @@ test('files on disk are readable markdown with YAML frontmatter', async () => {
     assert.match(raw, /^---/)
     assert.match(raw, /criticality: P2/)
     assert.match(raw, /- \{url: "https:\/\/a\.test", tag: Design, color: purple\}/)
-    assert.match(raw, /<!-- case: Happy path -->/)
+    assert.match(raw, /<!-- tab: Happy path -->/)
     assert.match(raw, /Step 1/)
   })
 })

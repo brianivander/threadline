@@ -37,6 +37,7 @@ import {
 import { anchorFromSelection, applyCommentMarks, setActiveMark, threadIdAtSelection } from '@/board/caseText'
 import { commentMarksPlugin } from '@/board/commentMarks'
 import { useImageAssets } from '@/board/useImageAssets'
+import { LinkPathsProvider } from '@/board/LinkPopover'
 import { useManualSave } from '@/board/useManualSave'
 import { SaveNotices } from '@/panels/SaveBar'
 
@@ -62,6 +63,10 @@ export default function CaseEditor({
   onActivateThread,
   onOpenThread,
   onSaveStateChange,
+  // Where a link in the body goes when it's clicked. The host resolves it —
+  // a story-relative path has to be rebased on the story's folder before any
+  // panel can show it. See LinkPopover.jsx.
+  onOpenLink,
 }) {
   const editorRef = useRef(null)
   const [lexicalEditor, setLexicalEditor] = useState(null)
@@ -241,17 +246,25 @@ export default function CaseEditor({
               row and covers this body along with the params. A recovered draft
               still needs explaining where it was recovered, though. */}
           <SaveNotices recovered={recovered} error={saveError} problem={images.error} onDiscard={discard} onSave={save} />
-          <MDXEditor
-            // Seeded like a defaultValue, so text replaced from outside — a
-            // recovered draft, a discard — only lands via a remount.
-            key={`${caseId}:${seed}`}
-            ref={editorRef}
-            markdown={text}
-            onChange={onChange}
-            contentEditableClassName="threadline-prose"
-            className="flex min-h-0 flex-1 flex-col"
-            plugins={markdownPlugins([commentMarksPlugin({ onEditor: setLexicalEditor })], { images })}
-          />
+          {/* The link popover rebases a pasted local path onto this story's
+              folder, and needs both halves to do it. Stories only: a plain
+              document has never opened local links, so it isn't given one. */}
+          <LinkPathsProvider root={root} docDir={docDir}>
+            <MDXEditor
+              // Seeded like a defaultValue, so text replaced from outside — a
+              // recovered draft, a discard — only lands via a remount.
+              key={`${caseId}:${seed}`}
+              ref={editorRef}
+              markdown={text}
+              onChange={onChange}
+              contentEditableClassName="threadline-prose"
+              className="flex min-h-0 flex-1 flex-col"
+              plugins={markdownPlugins([commentMarksPlugin({ onEditor: setLexicalEditor })], {
+                images,
+                onOpenLink,
+              })}
+            />
+          </LinkPathsProvider>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>

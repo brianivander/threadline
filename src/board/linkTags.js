@@ -1,23 +1,29 @@
 // Link-tag colours. A link's stored `color` is a palette KEY ("purple"), never a
 // literal — the fill and ink for each key live in index.css as --tag-<key> and
-// --tag-<key>-ink. They are the same in both themes: the set includes white and
-// black, so these are absolute colours rather than theme-adaptive ones. An unset
-// or unrecognised key renders untinted, which is what a new link starts at.
+// --tag-<key>-ink. They are the same in both themes, deliberately: a badge is a
+// colour the user picked by name, and a named colour that shifts under you when
+// the theme flips is a worse colour. An unset or unrecognised key renders
+// untinted, which is what a new link starts at.
 //
-// Three neutrals first, then the nine hues in ascending order, which is also the
-// order they appear in the picker grid.
+// Every fill in the set is LIGHT, and that is load-bearing rather than
+// incidental. It means one dark ink reads on all nine, and — the part that
+// matters — one dark link-blue reads on all nine too, so a hyperlink inside a
+// badge needs no per-key exception (see the --link-on-tag note in index.css).
+// White, black and dark-blue are gone for exactly that reason: white was
+// invisible on the page, and the two dark fills each needed light ink and would
+// have needed a light link-blue to go with it.
+//
+// Grey first, then the eight hues in ascending order, which is also the order
+// they appear in the picker grid.
 
 export const TAG_COLORS = [
-  'white',
   'grey',
-  'black',
   'red',
   'orange',
   'yellow',
   'green',
   'cyan',
   'light-blue',
-  'dark-blue',
   'purple',
   'pink',
 ]
@@ -30,7 +36,7 @@ export function tagColorLabel(color) {
 }
 
 // The border is the fill nudged toward its own ink — enough of an edge that a
-// white chip is still visible on a white surface, without a second variable.
+// pale chip is still visible on a pale surface, without a second variable.
 function border(color) {
   return `color-mix(in oklab, var(--tag-${color}) 78%, var(--tag-${color}-ink))`
 }

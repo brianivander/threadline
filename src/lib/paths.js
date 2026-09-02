@@ -70,6 +70,28 @@ export function workspaceIdOf(root, absPath) {
   return target.slice(prefix.length)
 }
 
+// The volume an absolute path sits on: a Windows drive ('c:'), a UNC share
+// ('//server/share'), or '/' for a POSIX root. Lowercased, because a drive
+// letter arrives from a directory dialog on one side and typed text on the
+// other, and Windows considers those the same drive.
+//
+// Only the VOLUME, deliberately — not the first folder. Two POSIX paths under
+// different top-level directories ('/other/x' from '/repo/folder') are
+// perfectly reachable from each other, and treating those as unrelated would
+// refuse relative paths that work fine.
+function volumeOf(value) {
+  const p = toPosix(value)
+  if (/^[a-zA-Z]:/.test(p)) return p.slice(0, 2).toLowerCase()
+  if (p.startsWith('//')) return `//${p.slice(2).split('/').slice(0, 2).join('/')}`.toLowerCase()
+  return p.startsWith('/') ? '/' : ''
+}
+
+// Can a relative path get from one to the other at all?
+function sameVolume(a, b) {
+  const volume = volumeOf(a)
+  return !!volume && volume === volumeOf(b)
+}
+
 // Relative path from `fromDir` (absolute, POSIX-normalized) to `target`
 // (absolute, POSIX-normalized). Returns '../..'-style segments joined with '/',
 // or '.' when they're the same directory. Pure string work — no fs access, no
@@ -100,6 +122,11 @@ export function toRelativePath(value, storyAbsDir) {
   // prevent.
   const raw = /^file:/i.test(s) ? fromFileUrl(s) : s
   if (!raw || !isAbsolutePath(raw) || !storyAbsDir) return value
+  // Two paths on different volumes — a different drive, or a UNC share against
+  // a local path — have no relative route between them. Counting levels anyway
+  // yields '../../D:/x/spec.md', which is a path to nowhere on every machine
+  // including this one. The absolute path is at least true here.
+  if (!sameVolume(storyAbsDir, raw)) return toPosix(raw)
   return relativePath(storyAbsDir, raw)
 }
 
@@ -189,4 +216,14 @@ export function resolveLocalLink(value, storyAbsDir) {
     else if (part !== '.' && part !== '') stack.push(part)
   }
   return toFileUrl(stack.join('/'))
+}
+
+// A pasted link value as an absolute POSIX path, or '' when it isn't one.
+// `file:` URLs are unwrapped, Windows backslashes are flattened, and anything
+// relative or web comes back empty — the caller reads that as "nothing to
+// check here, leave it alone".
+export function toAbsolutePath(value) {
+  const s = String(value || '').trim()
+  const raw = /^file:/i.test(s) ? fromFileUrl(s) : s
+  return isAbsolutePath(raw) ? toPosix(raw) : ''
 }

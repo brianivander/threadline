@@ -16,11 +16,18 @@
 //   syncWorkspace       — pull --ff-only, commit everything, push. Resolves to
 //                         { ok, reason?, committed?, pushed?, status }; a
 //                         failure is a resolved value, not a rejection
+//   platform            — process.platform, so the UI can name the OS file
+//                         manager ('Finder' / 'File Explorer') rather than
+//                         saying 'show in folder' everywhere
+//   showItemInFolder    — opens the OS file manager with the given absolute
+//                         path selected (main.cjs's
+//                         'threadline:show-in-folder' handler)
 
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('threadlineDesktop', {
   isElectron: true,
+  platform: process.platform,
   chooseWorkspace: () => ipcRenderer.invoke('threadline:choose-workspace'),
   getCurrentUserEmail: (workspaceDir) => ipcRenderer.invoke('threadline:get-user', workspaceDir),
   getGitStatus: (root) => ipcRenderer.invoke('threadline:git-status', root),
@@ -29,4 +36,5 @@ contextBridge.exposeInMainWorld('threadlineDesktop', {
   getWorkspaceAccount: (workspaceDir) => ipcRenderer.invoke('threadline:get-workspace-account', workspaceDir),
   setWorkspaceAccount: (workspaceDir, username) => ipcRenderer.invoke('threadline:set-workspace-account', workspaceDir, username),
   validateAccounts: (workspaceDir) => ipcRenderer.invoke('threadline:validate-accounts', workspaceDir),
+  showItemInFolder: (absPath) => ipcRenderer.invoke('threadline:show-in-folder', absPath),
 })

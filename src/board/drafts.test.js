@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import test, { beforeEach } from 'node:test'
 
-import { clearDraft, draftKey, draftMatchesDisk, readDraft, writeDraft } from './drafts.js'
+import { clearDraft, draftIsFromThisSession, draftKey, draftMatchesDisk, readDraft, writeDraft } from './drafts.js'
 
 function fakeStorage({ failWrites = false } = {}) {
   const map = new Map()
@@ -83,6 +83,40 @@ test('draftMatchesDisk is true only when the file is as the draft left it', () =
 
   assert.equal(draftMatchesDisk(draft, 'original'), true, 'unchanged since the draft was typed')
   assert.equal(draftMatchesDisk(draft, 'someone else pulled this in'), false, 'file moved on — restoring would revert it')
+})
+
+// Authorship is what separates "you switched tabs" from "the app crashed", and
+// so decides whether restoring the text is announced or silent.
+//
+// Each of these takes its own scope on purpose: the record of what this session
+// wrote is module state, deliberately outliving any one editor, so it outlives
+// beforeEach too. Sharing a scope would make them pass or fail in order.
+test('a draft this session wrote is known to be its own', () => {
+  writeDraft('case:authored-1', { text: 'half typed', baseline: '' })
+  assert.equal(draftIsFromThisSession('case:authored-1'), true)
+})
+
+test('a draft left by a previous session is not claimed', () => {
+  // Straight into storage: what a crash leaves behind, with no write through
+  // this module to record.
+  globalThis.localStorage.setItem(
+    draftKey('case:crashed-1'),
+    JSON.stringify({ text: 'from before the crash', baseline: '', at: '2026-01-01T00:00:00Z' }),
+  )
+  assert.equal(draftIsFromThisSession('case:crashed-1'), false)
+  assert.equal(readDraft('case:crashed-1').text, 'from before the crash', 'still restored — only the notice differs')
+})
+
+test('clearing a draft gives up the claim to it', () => {
+  writeDraft('case:cleared-1', { text: 'x', baseline: '' })
+  clearDraft('case:cleared-1')
+  assert.equal(draftIsFromThisSession('case:cleared-1'), false)
+})
+
+test('authorship is per scope, so one tab does not vouch for another', () => {
+  writeDraft('case:scoped-1', { text: 'x', baseline: '' })
+  assert.equal(draftIsFromThisSession('case:scoped-2'), false)
+  assert.equal(draftIsFromThisSession(''), false)
 })
 
 test('an empty baseline and a missing one are the same thing', () => {
